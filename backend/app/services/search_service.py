@@ -92,7 +92,17 @@ async def execute_search(run_id: str) -> None:
     email_count = 0
     lead_count = 0
     seen_urls: set[str] = set()
-    seen_company_keys: set[str] = set()
+
+    # In-memory caches for the duration of this run only. The Google Sheets
+    # API has a default quota of 60 read requests/minute/user — without
+    # this cache, every job result triggers a fresh full-sheet
+    # find_one_where() lookup against COMPANIES and CONTACTS, which blows
+    # the quota within seconds on any real result set and silently starves
+    # the rest of the run (or fails it outright with a 429). Companies and
+    # contacts created by earlier iterations of this same run are looked up
+    # here first; only a genuine cache miss falls through to the Sheet.
+    company_cache: dict[str, dict] = {}
+    contact_cache: dict[str, dict | None] = {}
 
     default_template = await _get_default_template()
 
@@ -159,12 +169,11 @@ async def execute_search(run_id: str) -> None:
                                                             "job_title": job_record["job_title"], "source": source_name})
 
             company_key = company_name.strip().lower()
-            if company_key in seen_company_keys:
-                existing_company = await company_repo.find_one_where(normalized_name=company_key)
-                company = existing_company
-            else:
-                seen_company_keys.add(company_key)
+            company = company_cache.get(company_key)
+            if company is None and company_key not in company_cache:
                 company = await company_repo.find_one_where(normalized_name=company_key)
+                if company:
+                    company_cache[company_key] = company
 
             if not company:
                 company_id = new_id("company")
@@ -177,6 +186,7 @@ async def execute_search(run_id: str) -> None:
                     "research_status": ResearchStatus.PENDING.value,
                 }
                 company = await company_repo.create(company_record)
+                company_cache[company_key] = company
                 company_count += 1
                 await event_bus.publish(run_id, "company_found", {"company_id": company_id, "company_name": company_name})
 
@@ -204,29 +214,33 @@ async def execute_search(run_id: str) -> None:
             job_record["company_id"] = company_id
             await job_repo.create(job_record)
 
-            contact = await contact_repo.find_one_where(company_id=company_id)
-            if not contact:
-                contact_snippets = await gather_contact_snippets(company_name, company.get("domain"))
-                discovered = discover_email(company_name, company.get("domain"), contact_snippets)
-                if discovered and discovered.get("email"):
-                    contact_id = new_id("contact")
-                    contact = await contact_repo.create({
-                        "contact_id": contact_id, "company_id": company_id,
-                        "contact_name": discovered.get("contact_name") or "",
-                        "designation": discovered.get("designation") or "",
-                        "email": discovered["email"],
-                        "email_type": discovered.get("email_type") or EmailType.UNKNOWN.value,
-                        "email_source_url": discovered.get("email_source_url") or "",
-                        "email_confidence": discovered.get("email_confidence", 0),
-                        "phone": "", "linkedin_url": "",
-                        "verification_status": VerificationStatus.UNVERIFIED.value,
-                    })
-                    email_count += 1
-                    await event_bus.publish(run_id, "email_found", {"company_id": company_id, "email": discovered["email"]})
-                    await log_activity(lead_id=None, company_id=company_id, activity_type="EMAIL_FOUND",
-                                        description=f"Business email found: {discovered['email']}")
-                else:
-                    contact = None
+            if company_id in contact_cache:
+                contact = contact_cache[company_id]
+            else:
+                contact = await contact_repo.find_one_where(company_id=company_id)
+                if not contact:
+                    contact_snippets = await gather_contact_snippets(company_name, company.get("domain"))
+                    discovered = discover_email(company_name, company.get("domain"), contact_snippets)
+                    if discovered and discovered.get("email"):
+                        contact_id = new_id("contact")
+                        contact = await contact_repo.create({
+                            "contact_id": contact_id, "company_id": company_id,
+                            "contact_name": discovered.get("contact_name") or "",
+                            "designation": discovered.get("designation") or "",
+                            "email": discovered["email"],
+                            "email_type": discovered.get("email_type") or EmailType.UNKNOWN.value,
+                            "email_source_url": discovered.get("email_source_url") or "",
+                            "email_confidence": discovered.get("email_confidence", 0),
+                            "phone": "", "linkedin_url": "",
+                            "verification_status": VerificationStatus.UNVERIFIED.value,
+                        })
+                        email_count += 1
+                        await event_bus.publish(run_id, "email_found", {"company_id": company_id, "email": discovered["email"]})
+                        await log_activity(lead_id=None, company_id=company_id, activity_type="EMAIL_FOUND",
+                                            description=f"Business email found: {discovered['email']}")
+                    else:
+                        contact = None
+                contact_cache[company_id] = contact
 
             if not contact:
                 continue  # No public email found — cannot create an outreach-ready lead.
@@ -288,10 +302,19 @@ async def execute_search(run_id: str) -> None:
                 await log_activity(lead_id=lead_id, company_id=company_id, activity_type="EMAIL_GENERATED",
                                     description="Personalized outreach email generated (pending approval)")
 
-            await search_run_repo.update(run_id, {
-                "results": total_results, "qualified": qualified_count, "companies": company_count,
-                "emails": email_count, "leads": lead_count,
-            })
+            # Persist SEARCH_RUNS progress counters periodically rather than
+            # after every single job — each update() is a Sheets read+write,
+            # and doing it per-job is what exhausts the API quota on runs
+            # with more than a handful of results. Live progress in the UI
+            # still comes from the EventBus (SSE), which this loop already
+            # publishes to on every job/company/email/lead — this counter
+            # sync is only for the SEARCH_RUNS row itself (used by anyone
+            # loading /search/{run_id} without an active SSE connection).
+            if qualified_count % 5 == 0:
+                await search_run_repo.update(run_id, {
+                    "results": total_results, "qualified": qualified_count, "companies": company_count,
+                    "emails": email_count, "leads": lead_count,
+                })
 
     await search_run_repo.update(run_id, {
         "status": SearchRunStatus.COMPLETED.value, "completed_at": iso_now(),
