@@ -1,0 +1,310 @@
+"""
+Search orchestration (System.txt sections 7, 92-95, 138 end-to-end flow).
+
+Pipeline per search run:
+  sources -> raw results -> JobExtraction -> location filter -> dedup
+  -> COMPANIES upsert -> CompanyResearch -> EmailDiscovery -> CONTACTS
+  -> LEADS -> OpportunityAnalysis -> lead score -> EMAIL_DRAFTS (draft only,
+  human approval required before queueing, per rule 17 AUTO_SEND=OFF).
+
+Every step publishes a real event to the EventBus — no fake progress
+numbers (rule 94). If a step fails or a source is unavailable, the run
+continues with the remaining sources/steps.
+"""
+from __future__ import annotations
+
+import logging
+
+from app.models.enums import (
+    JobSource, ResearchStatus, LeadStatus, EmailDraftStatus, RecommendedSolution,
+    SearchRunStatus, VerificationStatus, EmailType,
+)
+from app.repositories.repositories import (
+    search_run_repo, job_repo, company_repo, contact_repo, lead_repo, email_draft_repo,
+    email_template_repo,
+)
+from app.sources.source_manager import run_source, guess_company_name_from_title
+from app.agents.job_extraction import extract_job
+from app.agents.company_research import (
+    research_company, discover_email, gather_company_snippets, gather_contact_snippets,
+)
+from app.agents.opportunity_analysis import analyze_opportunity, compute_lead_score, compute_priority
+from app.agents.email_generation import generate_initial_email
+from app.services.activity_service import log_activity
+from app.services.event_bus import event_bus
+from app.utils.ids import new_id
+from app.utils.location import normalize_state, normalize_city, city_in_state
+from app.utils.time_utils import iso_now
+from app.config.settings import get_settings
+
+logger = logging.getLogger("search_service")
+
+
+async def start_search(*, job_title: str, state: str | None, city: str | None,
+                        date_filter: str, experience: str | None, sources: list[str],
+                        result_limit: int) -> dict:
+    run_id = new_id("run")
+    norm_state = normalize_state(state) if state else None
+    norm_city = normalize_city(city) if city else None
+    record = {
+        "run_id": run_id,
+        "query": job_title,
+        "job_title": job_title,
+        "state": norm_state or "",
+        "city": norm_city or "",
+        "sources": ",".join(sources),
+        "date_filter": date_filter,
+        "experience": experience or "",
+        "result_limit": result_limit,
+        "results": 0,
+        "qualified": 0,
+        "companies": 0,
+        "emails": 0,
+        "leads": 0,
+        "status": SearchRunStatus.PENDING.value,
+        "started_at": iso_now(),
+        "completed_at": "",
+        "error_message": "",
+    }
+    await search_run_repo.create(record)
+    return record
+
+
+async def execute_search(run_id: str) -> None:
+    settings = get_settings()
+    run = await search_run_repo.get_by_id(run_id)
+    if not run:
+        logger.error("Search run %s not found", run_id)
+        return
+
+    await search_run_repo.update(run_id, {"status": SearchRunStatus.RUNNING.value})
+    await event_bus.publish(run_id, "search_progress", {"status": "RUNNING", "message": "Search started"})
+
+    job_title = run["job_title"]
+    state = run.get("state") or None
+    city = run.get("city") or None
+    result_limit = int(run.get("result_limit") or 10)
+    sources = [s for s in (run.get("sources") or "").split(",") if s]
+
+    total_results = 0
+    qualified_count = 0
+    company_count = 0
+    email_count = 0
+    lead_count = 0
+    seen_urls: set[str] = set()
+    seen_company_keys: set[str] = set()
+
+    default_template = await _get_default_template()
+
+    for source_name in sources:
+        try:
+            source_enum = JobSource(source_name)
+        except ValueError:
+            continue
+
+        raw_results = await run_source(job_title, state, city, source_enum, result_limit)
+        await event_bus.publish(run_id, "source_status", {
+            "source": source_name, "found": len(raw_results),
+        })
+
+        for raw in raw_results:
+            if raw.url in seen_urls:
+                continue
+            seen_urls.add(raw.url)
+            total_results += 1
+
+            extracted = extract_job(raw.title, raw.snippet, raw.url, job_title)
+            if not extracted or not extracted.get("is_relevant_role"):
+                continue
+
+            company_name = extracted.get("company_name") or guess_company_name_from_title(raw.title)
+            if not company_name:
+                continue
+
+            job_city = extracted.get("city") or city
+            job_state = extracted.get("state") or state
+            if state and job_state and not city_in_state(job_city, job_state):
+                if normalize_state(job_state) != normalize_state(state):
+                    continue
+
+            job_id = new_id("job")
+            job_record = {
+                "job_id": job_id,
+                "source": source_name,
+                "source_job_id": "",
+                "job_title": extracted.get("job_title") or job_title,
+                "company_id": "",
+                "company_name": company_name,
+                "location": f"{job_city or ''}, {job_state or ''}".strip(", "),
+                "city": job_city or "",
+                "state": job_state or "",
+                "country": "India",
+                "description": raw.snippet,
+                "experience": extracted.get("experience") or "",
+                "salary": extracted.get("salary") or "",
+                "employment_type": extracted.get("employment_type") or "",
+                "posted_date": "",
+                "skills": ",".join(extracted.get("skills") or []),
+                "qualification": extracted.get("qualification") or "",
+                "job_url": raw.url,
+                "application_url": raw.url,
+                "source_url": raw.url,
+                "extraction_confidence": extracted.get("extraction_confidence", 0),
+                "run_id": run_id,
+                "is_qualified": True,
+                "created_at": iso_now(),
+            }
+            qualified_count += 1
+            await event_bus.publish(run_id, "job_found", {"job_id": job_id, "company_name": company_name,
+                                                            "job_title": job_record["job_title"], "source": source_name})
+
+            company_key = company_name.strip().lower()
+            if company_key in seen_company_keys:
+                existing_company = await company_repo.find_one_where(normalized_name=company_key)
+                company = existing_company
+            else:
+                seen_company_keys.add(company_key)
+                company = await company_repo.find_one_where(normalized_name=company_key)
+
+            if not company:
+                company_id = new_id("company")
+                company_record = {
+                    "company_id": company_id, "company_name": company_name,
+                    "normalized_name": company_key, "official_website": "", "domain": "",
+                    "industry": "", "city": job_city or "", "state": job_state or "",
+                    "country": "India", "phone": "", "linkedin_url": "",
+                    "company_description": "", "website_confidence": 0,
+                    "research_status": ResearchStatus.PENDING.value,
+                }
+                company = await company_repo.create(company_record)
+                company_count += 1
+                await event_bus.publish(run_id, "company_found", {"company_id": company_id, "company_name": company_name})
+
+                snippets = await gather_company_snippets(company_name, job_city, job_state)
+                research = research_company(company_name, job_city, job_state, snippets)
+                if research:
+                    await company_repo.update(company_id, {
+                        "official_website": research.get("official_website") or "",
+                        "domain": research.get("domain") or "",
+                        "industry": research.get("industry") or "",
+                        "company_description": research.get("company_description") or "",
+                        "linkedin_url": research.get("linkedin_url") or "",
+                        "phone": research.get("phone") or "",
+                        "website_confidence": research.get("website_confidence", 0),
+                        "research_status": ResearchStatus.COMPLETED.value,
+                    })
+                    company["domain"] = research.get("domain") or ""
+                    company["website_confidence"] = research.get("website_confidence", 0)
+                else:
+                    await company_repo.update(company_id, {"research_status": ResearchStatus.FAILED.value})
+                await log_activity(lead_id=None, company_id=company_id, activity_type="COMPANY_RESEARCHED",
+                                    description=f"Researched {company_name}")
+
+            company_id = company["company_id"]
+            job_record["company_id"] = company_id
+            await job_repo.create(job_record)
+
+            contact = await contact_repo.find_one_where(company_id=company_id)
+            if not contact:
+                contact_snippets = await gather_contact_snippets(company_name, company.get("domain"))
+                discovered = discover_email(company_name, company.get("domain"), contact_snippets)
+                if discovered and discovered.get("email"):
+                    contact_id = new_id("contact")
+                    contact = await contact_repo.create({
+                        "contact_id": contact_id, "company_id": company_id,
+                        "contact_name": discovered.get("contact_name") or "",
+                        "designation": discovered.get("designation") or "",
+                        "email": discovered["email"],
+                        "email_type": discovered.get("email_type") or EmailType.UNKNOWN.value,
+                        "email_source_url": discovered.get("email_source_url") or "",
+                        "email_confidence": discovered.get("email_confidence", 0),
+                        "phone": "", "linkedin_url": "",
+                        "verification_status": VerificationStatus.UNVERIFIED.value,
+                    })
+                    email_count += 1
+                    await event_bus.publish(run_id, "email_found", {"company_id": company_id, "email": discovered["email"]})
+                    await log_activity(lead_id=None, company_id=company_id, activity_type="EMAIL_FOUND",
+                                        description=f"Business email found: {discovered['email']}")
+                else:
+                    contact = None
+
+            if not contact:
+                continue  # No public email found — cannot create an outreach-ready lead.
+
+            opportunity = analyze_opportunity(job_record["job_title"], raw.snippet, extracted.get("skills") or [])
+            opp_score = opportunity.get("automation_opportunity_score", 0) if opportunity else 0
+            signals = opportunity.get("automation_signals", []) if opportunity else []
+            pains = opportunity.get("pain_points", []) if opportunity else []
+            solution = opportunity.get("recommended_solution", RecommendedSolution.MANUAL_REVIEW.value) if opportunity else RecommendedSolution.MANUAL_REVIEW.value
+
+            lead_score = compute_lead_score(
+                opp_score, True, contact.get("email_confidence", 0),
+                company.get("website_confidence", 0), extracted.get("extraction_confidence", 0),
+            )
+            priority = compute_priority(lead_score, opp_score)
+
+            lead_id = new_id("lead")
+            lead_record = {
+                "lead_id": lead_id, "company_id": company_id, "job_id": job_id,
+                "contact_id": contact["contact_id"], "lead_score": lead_score,
+                "botivate_opportunity_score": opp_score,
+                "automation_signals": ",".join(signals), "pain_points": ",".join(pains),
+                "recommended_solution": solution, "priority": priority,
+                "status": LeadStatus.QUALIFIED.value, "owner": "",
+                "next_action": "FOLLOW_UP", "next_action_date": "",
+                "notes": "", "last_activity_at": iso_now(),
+            }
+            await lead_repo.create(lead_record)
+            lead_count += 1
+            await event_bus.publish(run_id, "lead_created", {"lead_id": lead_id, "company_id": company_id,
+                                                               "lead_score": lead_score, "priority": priority})
+            await log_activity(lead_id=lead_id, company_id=company_id, activity_type="STATUS_CHANGED",
+                                description=f"Lead qualified — opportunity score {opp_score}")
+
+            if default_template:
+                generated = generate_initial_email(
+                    company_name=company_name, job_title=job_record["job_title"],
+                    city=job_city, contact_name=contact.get("contact_name") or None,
+                    automation_signals=signals, pain_points=pains,
+                    sender_name=settings.botivate_sender_name,
+                    botivate_website=settings.botivate_website_url,
+                )
+                email_id = new_id("email")
+                await email_draft_repo.create({
+                    "email_id": email_id, "lead_id": lead_id, "company_id": company_id,
+                    "template_id": default_template.get("template_id", ""),
+                    "recipient_email": contact["email"],
+                    "sender_email": settings.botivate_sender_email,
+                    "subject": generated["subject"],
+                    "plain_text_body": generated["plain_text_body"],
+                    "html_body": generated["html_body"],
+                    "personalization_points": ",".join(generated["personalization_points"]),
+                    "facts_used": ",".join(generated["facts_used"]),
+                    "confidence": generated["confidence"],
+                    "status": EmailDraftStatus.DRAFT.value,
+                })
+                await lead_repo.update(lead_id, {"status": LeadStatus.EMAIL_DRAFTED.value})
+                await event_bus.publish(run_id, "email_generated", {"lead_id": lead_id, "email_id": email_id})
+                await log_activity(lead_id=lead_id, company_id=company_id, activity_type="EMAIL_GENERATED",
+                                    description="Personalized outreach email generated (pending approval)")
+
+            await search_run_repo.update(run_id, {
+                "results": total_results, "qualified": qualified_count, "companies": company_count,
+                "emails": email_count, "leads": lead_count,
+            })
+
+    await search_run_repo.update(run_id, {
+        "status": SearchRunStatus.COMPLETED.value, "completed_at": iso_now(),
+        "results": total_results, "qualified": qualified_count, "companies": company_count,
+        "emails": email_count, "leads": lead_count,
+    })
+    await event_bus.publish(run_id, "search_progress", {
+        "status": "COMPLETED", "results": total_results, "qualified": qualified_count,
+        "companies": company_count, "emails": email_count, "leads": lead_count,
+    })
+    await event_bus.close(run_id)
+
+
+async def _get_default_template() -> dict | None:
+    templates = await email_template_repo.find_where(is_default=True)
+    return templates[0] if templates else None

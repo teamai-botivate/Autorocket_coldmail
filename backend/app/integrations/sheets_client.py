@@ -1,0 +1,132 @@
+"""
+Google Sheets client wrapper. Provides header-mapped row CRUD on top of
+gspread, with retries for transient API failures (rule 136: "If Google
+Sheets API fails: retry").
+
+Design notes:
+- Each worksheet's row 1 is the header (see docs/sheet-schema.md). We never
+  rely on column position outside this mapping so column reordering in the
+  sheet UI doesn't silently corrupt data.
+- Every entity has its own UUID column (e.g. job_id) — that column is used
+  as the lookup key, never the physical row index (rule 64).
+- gspread calls are synchronous; FastAPI route handlers call these through
+  `run_in_threadpool` (see repositories/base.py) to avoid blocking the
+  event loop.
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import gspread
+from google.oauth2.service_account import Credentials
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+from app.config.settings import get_settings
+
+logger = logging.getLogger("sheets_client")
+
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive.readonly",
+]
+
+RETRYABLE_EXC = (gspread.exceptions.APIError, ConnectionError, TimeoutError)
+
+
+class SheetsClient:
+    _instance: "SheetsClient | None" = None
+
+    def __init__(self) -> None:
+        settings = get_settings()
+        if not settings.sheets_configured:
+            self._gc = None
+            self._sh = None
+            logger.warning("Google Sheets not configured — SheetsClient running in stub mode")
+            return
+        creds = Credentials.from_service_account_info(
+            {
+                "type": "service_account",
+                "client_email": settings.google_service_account_email,
+                "private_key": settings.google_service_account_private_key.replace("\\n", "\n"),
+                "token_uri": "https://oauth2.googleapis.com/token",
+            },
+            scopes=SCOPES,
+        )
+        self._gc = gspread.authorize(creds)
+        self._sh = self._gc.open_by_key(settings.google_sheets_id)
+        self._ws_cache: dict[str, gspread.Worksheet] = {}
+
+    @classmethod
+    def instance(cls) -> "SheetsClient":
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    @property
+    def configured(self) -> bool:
+        return self._sh is not None
+
+    def worksheet(self, name: str) -> gspread.Worksheet:
+        if not self.configured:
+            raise RuntimeError("Google Sheets is not configured (missing env vars)")
+        if name not in self._ws_cache:
+            self._ws_cache[name] = self._sh.worksheet(name)
+        return self._ws_cache[name]
+
+    def ensure_worksheet(self, name: str, headers: list[str]) -> gspread.Worksheet:
+        if not self.configured:
+            raise RuntimeError("Google Sheets is not configured (missing env vars)")
+        try:
+            ws = self._sh.worksheet(name)
+        except gspread.exceptions.WorksheetNotFound:
+            ws = self._sh.add_worksheet(title=name, rows=1000, cols=max(26, len(headers) + 2))
+            ws.append_row(headers, value_input_option="RAW")
+            ws.freeze(rows=1)
+        self._ws_cache[name] = ws
+        return ws
+
+    @retry(reraise=True, stop=stop_after_attempt(4), wait=wait_exponential(multiplier=0.5, max=8),
+           retry=retry_if_exception_type(RETRYABLE_EXC))
+    def get_all_records(self, sheet_name: str) -> list[dict[str, Any]]:
+        ws = self.worksheet(sheet_name)
+        return ws.get_all_records(default_blank="")
+
+    @retry(reraise=True, stop=stop_after_attempt(4), wait=wait_exponential(multiplier=0.5, max=8),
+           retry=retry_if_exception_type(RETRYABLE_EXC))
+    def append_row(self, sheet_name: str, row: list[Any]) -> None:
+        ws = self.worksheet(sheet_name)
+        ws.append_row(row, value_input_option="RAW")
+
+    @retry(reraise=True, stop=stop_after_attempt(4), wait=wait_exponential(multiplier=0.5, max=8),
+           retry=retry_if_exception_type(RETRYABLE_EXC))
+    def find_row_by_id(self, sheet_name: str, id_column: str, id_value: str) -> tuple[int, dict[str, Any]] | None:
+        """Return (1-indexed row number, record dict) or None."""
+        ws = self.worksheet(sheet_name)
+        headers = ws.row_values(1)
+        if id_column not in headers:
+            return None
+        col_idx = headers.index(id_column) + 1
+        col_values = ws.col_values(col_idx)
+        for i, v in enumerate(col_values[1:], start=2):
+            if v == id_value:
+                row_values = ws.row_values(i)
+                record = {headers[j]: (row_values[j] if j < len(row_values) else "") for j in range(len(headers))}
+                return i, record
+        return None
+
+    @retry(reraise=True, stop=stop_after_attempt(4), wait=wait_exponential(multiplier=0.5, max=8),
+           retry=retry_if_exception_type(RETRYABLE_EXC))
+    def update_row(self, sheet_name: str, row_number: int, record: dict[str, Any]) -> None:
+        ws = self.worksheet(sheet_name)
+        headers = ws.row_values(1)
+        values = [record.get(h, "") for h in headers]
+        ws.update(f"A{row_number}:{gspread.utils.rowcol_to_a1(row_number, len(headers))[:-len(str(row_number))]}{row_number}",
+                  [values], value_input_option="RAW")
+
+    def update_row_simple(self, sheet_name: str, row_number: int, headers: list[str], record: dict[str, Any]) -> None:
+        ws = self.worksheet(sheet_name)
+        values = [record.get(h, "") for h in headers]
+        last_col_a1 = gspread.utils.rowcol_to_a1(1, len(headers))
+        col_letters = "".join(filter(str.isalpha, last_col_a1))
+        ws.update(f"A{row_number}:{col_letters}{row_number}", [values], value_input_option="RAW")
