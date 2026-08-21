@@ -17,9 +17,14 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
 
-    # Google Search
+    # Google Search — DEPRECATED, kept only so old .env files don't break
+    # pydantic-settings parsing. Job discovery now uses Tavily (see
+    # tavily_api_key below); this integration is no longer called.
     google_search_api_key: str = ""
     google_search_engine_id: str = ""
+
+    # Tavily Search (job discovery web search)
+    tavily_api_key: str = ""
 
     # Google Sheets
     google_sheets_id: str = ""
@@ -72,6 +77,10 @@ class Settings(BaseSettings):
     @property
     def google_search_configured(self) -> bool:
         return bool(self.google_search_api_key and self.google_search_engine_id)
+
+    @property
+    def tavily_configured(self) -> bool:
+        return bool(self.tavily_api_key)
 
 
 @lru_cache

@@ -87,7 +87,7 @@ async def get_settings_route():
             "queue_max_attempts": settings.queue_max_attempts,
             "sheets_configured": settings.sheets_configured,
             "openai_configured": settings.openai_configured,
-            "google_search_configured": settings.google_search_configured,
+            "web_search_configured": settings.tavily_configured,
         },
     }
 
@@ -111,7 +111,7 @@ async def health():
         "status": "ok",
         "sheets_configured": settings.sheets_configured,
         "openai_configured": settings.openai_configured,
-        "google_search_configured": settings.google_search_configured,
+        "web_search_configured": settings.tavily_configured,
         "email_test_mode": settings.email_test_mode,
         "mock_mode": settings.mock_mode,
     }

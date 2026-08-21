@@ -16,7 +16,7 @@ import logging
 import re
 from dataclasses import dataclass
 
-from app.integrations.google_search import search, SearchResult
+from app.integrations.web_search import search, SearchResult
 from app.models.enums import JobSource, SourceStatusValue
 from app.repositories.repositories import source_status_repo
 from app.utils.time_utils import iso_now

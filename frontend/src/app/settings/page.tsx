@@ -34,7 +34,7 @@ interface SettingsEnv {
   queue_max_attempts: number;
   sheets_configured: boolean;
   openai_configured: boolean;
-  google_search_configured: boolean;
+  web_search_configured: boolean;
 }
 
 interface SettingsData {
@@ -227,7 +227,7 @@ export default function SettingsPage() {
           <BoolCard label="Mock Mode" value={env?.mock_mode} icon={Mail} />
           <BoolCard label="Sheets Configured" value={env?.sheets_configured} icon={Sheet} />
           <BoolCard label="OpenAI Configured" value={env?.openai_configured} icon={Sparkles} />
-          <BoolCard label="Google Search Configured" value={env?.google_search_configured} icon={Search} />
+          <BoolCard label="Web Search Configured" value={env?.web_search_configured} icon={Search} />
           <MetricCard label="Max Follow-ups" value={env?.max_follow_ups ?? 0} icon={Repeat2} />
           <MetricCard label="Queue Batch Size" value={env?.queue_batch_size ?? 0} icon={Layers} />
           <MetricCard label="Queue Max Attempts" value={env?.queue_max_attempts ?? 0} icon={Gauge} />

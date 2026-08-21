@@ -12,7 +12,7 @@ email if one is visible. NEVER invent or guess an email address (System.txt
 section 11: "Do NOT guess emails. Do NOT invent contact names.").
 """
 from app.integrations.openai_client import structured_completion
-from app.integrations.google_search import search
+from app.integrations.web_search import search
 
 COMPANY_SCHEMA = {
     "type": "object",

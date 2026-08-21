@@ -333,9 +333,9 @@ async def execute_search(run_id: str) -> None:
 
     logger.info(
         "RUN_%s: COMPLETED sources=%s results=%d qualified=%d companies=%d emails=%d leads=%d "
-        "(openai_configured=%s google_search_configured=%s)",
+        "(openai_configured=%s tavily_configured=%s)",
         run_id, sources, total_results, qualified_count, company_count, email_count, lead_count,
-        settings.openai_configured, settings.google_search_configured,
+        settings.openai_configured, settings.tavily_configured,
     )
     await search_run_repo.update(run_id, {
         "status": SearchRunStatus.COMPLETED.value, "completed_at": iso_now(),
