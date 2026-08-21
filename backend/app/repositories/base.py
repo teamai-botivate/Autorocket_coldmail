@@ -89,10 +89,24 @@ class BaseRepository:
         self._list_cache_at = now
         return rows
 
+    async def _row_hint_for(self, id_value: str) -> int | None:
+        """Best-effort row number guess from the cached list_all() snapshot,
+        to let find_row_by_id() skip its expensive full-column scan. Never
+        forces a fresh sheet read — if there's no cache yet, returns None
+        and the caller falls back to the authoritative (more expensive)
+        lookup, same as before this optimization existed."""
+        if self._list_cache is None:
+            return None
+        for i, r in enumerate(self._list_cache):
+            if r.get(self.ID_FIELD) == id_value:
+                return i + 2  # +1 for 1-indexing, +1 for the header row
+        return None
+
     async def get_by_id(self, id_value: str) -> dict[str, Any] | None:
         if self._use_sheets:
+            row_hint = await self._row_hint_for(id_value)
             found = await run_in_threadpool(
-                self.client.find_row_by_id, self.SHEET_NAME, self.ID_FIELD, id_value
+                self.client.find_row_by_id, self.SHEET_NAME, self.ID_FIELD, id_value, row_hint
             )
             return found[1] if found else None
         for r in self._mem_store:
@@ -106,7 +120,15 @@ class BaseRepository:
         full = {h: record.get(h, "") for h in self.HEADERS}
         if self._use_sheets:
             await run_in_threadpool(self.client.append_row, self.SHEET_NAME, self._row_from_record(full))
-            self._invalidate_list_cache()
+            # Append the new record to the cache in place (if a cache exists)
+            # instead of invalidating it — this keeps _row_hint_for() usable
+            # for a get_by_id()/update() on this same record immediately
+            # after create(), which is the common pattern in the search
+            # pipeline (create company -> update with research results).
+            # Invalidating here would force every such follow-up call back
+            # onto the expensive full-scan path in find_row_by_id().
+            if self._list_cache is not None:
+                self._list_cache.append(full)
         else:
             self._mem_store.append(full)
         return full
@@ -115,8 +137,9 @@ class BaseRepository:
         patch = dict(patch)
         patch["updated_at"] = iso_now()
         if self._use_sheets:
+            row_hint = await self._row_hint_for(id_value)
             found = await run_in_threadpool(
-                self.client.find_row_by_id, self.SHEET_NAME, self.ID_FIELD, id_value
+                self.client.find_row_by_id, self.SHEET_NAME, self.ID_FIELD, id_value, row_hint
             )
             if not found:
                 return None
@@ -125,7 +148,19 @@ class BaseRepository:
             await run_in_threadpool(
                 self.client.update_row_simple, self.SHEET_NAME, row_number, self.HEADERS, merged
             )
-            self._invalidate_list_cache()
+            # Patch the cached copy in place rather than invalidating the
+            # whole cache — same rationale as create() above: keeps
+            # _row_hint_for() cheap for subsequent calls on this record
+            # within the same request/run, without ever serving stale data
+            # (the merged dict written here is exactly what's now on the
+            # sheet). If the id isn't in the cache (e.g. it was created
+            # before this repository instance's cache existed), this is a
+            # harmless no-op — the next list_all() still reads fresh.
+            if self._list_cache is not None:
+                for i, r in enumerate(self._list_cache):
+                    if r.get(self.ID_FIELD) == id_value:
+                        self._list_cache[i] = merged
+                        break
             return merged
         for r in self._mem_store:
             if r.get(self.ID_FIELD) == id_value:

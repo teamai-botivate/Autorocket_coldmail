@@ -100,13 +100,34 @@ class SheetsClient:
 
     @retry(reraise=True, stop=stop_after_attempt(4), wait=wait_exponential(multiplier=0.5, max=8),
            retry=retry_if_exception_type(RETRYABLE_EXC))
-    def find_row_by_id(self, sheet_name: str, id_column: str, id_value: str) -> tuple[int, dict[str, Any]] | None:
-        """Return (1-indexed row number, record dict) or None."""
+    def find_row_by_id(self, sheet_name: str, id_column: str, id_value: str,
+                        row_hint: int | None = None) -> tuple[int, dict[str, Any]] | None:
+        """Return (1-indexed row number, record dict) or None.
+
+        row_hint (optional): a caller-supplied guess at the row number,
+        typically derived from a cached get_all_records() snapshot
+        (position in that list + 2, accounting for the header row). If the
+        hint is correct we do exactly ONE read (row_values(i)) instead of
+        the full 3-read scan below (headers + full id column + row) — this
+        is what makes update()/get_by_id() cheap on a warm cache. If the
+        hint is stale (row shifted since the snapshot, e.g. another process
+        wrote to the sheet) we detect the mismatch and fall back to the
+        full scan, so correctness never depends on the cache being fresh.
+        """
         ws = self.worksheet(sheet_name)
         headers = ws.row_values(1)
         if id_column not in headers:
             return None
-        col_idx = headers.index(id_column) + 1
+        id_col_idx = headers.index(id_column)
+
+        if row_hint is not None:
+            row_values = ws.row_values(row_hint)
+            if id_col_idx < len(row_values) and row_values[id_col_idx] == id_value:
+                record = {headers[j]: (row_values[j] if j < len(row_values) else "") for j in range(len(headers))}
+                return row_hint, record
+            # Hint was stale — fall through to the authoritative full scan below.
+
+        col_idx = id_col_idx + 1
         col_values = ws.col_values(col_idx)
         for i, v in enumerate(col_values[1:], start=2):
             if v == id_value:
