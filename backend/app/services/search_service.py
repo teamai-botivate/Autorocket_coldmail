@@ -113,28 +113,40 @@ async def execute_search(run_id: str) -> None:
             continue
 
         raw_results = await run_source(job_title, state, city, source_enum, result_limit)
+        logger.info("RUN_%s: source=%s returned %d raw results", run_id, source_name, len(raw_results))
         await event_bus.publish(run_id, "source_status", {
             "source": source_name, "found": len(raw_results),
         })
 
         for raw in raw_results:
             if raw.url in seen_urls:
+                logger.debug("RUN_%s: skip duplicate url=%s", run_id, raw.url)
                 continue
             seen_urls.add(raw.url)
             total_results += 1
 
             extracted = extract_job(raw.title, raw.snippet, raw.url, job_title)
-            if not extracted or not extracted.get("is_relevant_role"):
+            if not extracted:
+                logger.warning("RUN_%s: DROP url=%s reason=job_extraction_returned_none "
+                                "(OpenAI not configured or call failed)", run_id, raw.url)
+                continue
+            if not extracted.get("is_relevant_role"):
+                logger.info("RUN_%s: DROP url=%s reason=not_relevant_role title=%r",
+                            run_id, raw.url, raw.title)
                 continue
 
             company_name = extracted.get("company_name") or guess_company_name_from_title(raw.title)
             if not company_name:
+                logger.warning("RUN_%s: DROP url=%s reason=no_company_name_extracted title=%r",
+                               run_id, raw.url, raw.title)
                 continue
 
             job_city = extracted.get("city") or city
             job_state = extracted.get("state") or state
             if state and job_state and not city_in_state(job_city, job_state):
                 if normalize_state(job_state) != normalize_state(state):
+                    logger.info("RUN_%s: DROP url=%s reason=location_mismatch job_state=%r requested_state=%r",
+                                run_id, raw.url, job_state, state)
                     continue
 
             job_id = new_id("job")
@@ -243,6 +255,9 @@ async def execute_search(run_id: str) -> None:
                 contact_cache[company_id] = contact
 
             if not contact:
+                logger.warning("RUN_%s: DROP url=%s company=%r reason=no_public_email_found "
+                               "(cannot create outreach-ready lead without a verified email)",
+                               run_id, raw.url, company_name)
                 continue  # No public email found — cannot create an outreach-ready lead.
 
             opportunity = analyze_opportunity(job_record["job_title"], raw.snippet, extracted.get("skills") or [])
@@ -316,6 +331,12 @@ async def execute_search(run_id: str) -> None:
                     "emails": email_count, "leads": lead_count,
                 })
 
+    logger.info(
+        "RUN_%s: COMPLETED sources=%s results=%d qualified=%d companies=%d emails=%d leads=%d "
+        "(openai_configured=%s google_search_configured=%s)",
+        run_id, sources, total_results, qualified_count, company_count, email_count, lead_count,
+        settings.openai_configured, settings.google_search_configured,
+    )
     await search_run_repo.update(run_id, {
         "status": SearchRunStatus.COMPLETED.value, "completed_at": iso_now(),
         "results": total_results, "qualified": qualified_count, "companies": company_count,

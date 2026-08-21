@@ -80,7 +80,9 @@ def build_queries(job_title: str, state: str | None, city: str | None, source: J
 async def run_source(job_title: str, state: str | None, city: str | None, source: JobSource,
                       result_limit: int = 10) -> list[RawJobResult]:
     queries = build_queries(job_title, state, city, source)
+    logger.info("SOURCE_RUN_START source=%s queries=%s", source.value, queries)
     if not queries:
+        logger.warning("SOURCE_NO_QUERY_STRATEGY source=%s", source.value)
         await _mark_status(source, SourceStatusValue.UNAVAILABLE, "No query strategy configured")
         return []
 
@@ -88,16 +90,26 @@ async def run_source(job_title: str, state: str | None, city: str | None, source
     any_success = False
     for q in queries:
         hits: list[SearchResult] = await search(q, num=min(result_limit, 10))
+        logger.info("SOURCE_QUERY_RESULT source=%s query=%r hits=%d", source.value, q, len(hits))
         if hits:
             any_success = True
+        filtered_out = 0
         for h in hits:
             if source != JobSource.GOOGLE_SEARCH:
                 domain = SOURCE_DOMAINS.get(source, "")
                 if domain.split("/")[0] not in h.link:
+                    filtered_out += 1
                     continue
             results.append(RawJobResult(source=source.value, title=h.title, url=h.link, snippet=h.snippet))
+        if filtered_out:
+            logger.info(
+                "SOURCE_DOMAIN_FILTER_DROPPED source=%s query=%r dropped=%d "
+                "(hit returned by search but link doesn't contain expected domain)",
+                source.value, q, filtered_out,
+            )
 
     if not any_success:
+        logger.warning("SOURCE_UNAVAILABLE source=%s reason=no_indexed_results", source.value)
         await _mark_status(source, SourceStatusValue.UNAVAILABLE, "No indexed results returned (search not configured or no matches)")
     else:
         await _mark_status(source, SourceStatusValue.OK, f"{len(results)} results")
@@ -110,6 +122,8 @@ async def run_source(job_title: str, state: str | None, city: str | None, source
             continue
         seen.add(r.url)
         deduped.append(r)
+    logger.info("SOURCE_RUN_END source=%s raw=%d deduped=%d returned=%d",
+                source.value, len(results), len(deduped), len(deduped[:result_limit]))
     return deduped[:result_limit]
 
 
