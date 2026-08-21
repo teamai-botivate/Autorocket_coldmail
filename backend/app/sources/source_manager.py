@@ -2,13 +2,14 @@
 Source Manager (System.txt sections 8, 90, 91).
 
 Modular, non-hardcoded source architecture. Each source is a "site:" scoped
-Google Search query construction — we do NOT bypass login/CAPTCHA/paywalls
+web search query construction — we do NOT bypass login/CAPTCHA/paywalls
 and we do NOT scrape job portals directly. This respects robots.txt/ToS by
 only reading back what is already publicly indexed via the configured
-Google Custom Search Engine.
+search provider (Tavily — see app/integrations/web_search.py).
 
-If a source's search yields nothing or the CSE isn't configured, the source
-is marked UNAVAILABLE/BLOCKED in SOURCE_STATUS rather than fabricating jobs.
+If a source's search yields nothing or the provider isn't configured, the
+source is marked UNAVAILABLE/BLOCKED in SOURCE_STATUS rather than
+fabricating jobs.
 """
 from __future__ import annotations
 
@@ -143,14 +144,36 @@ async def _mark_status(source: JobSource, status: SourceStatusValue, notes: str)
         await source_status_repo.create(record)
 
 
+# Platform/aggregator names that must never be treated as a hiring company.
+# Job board titles frequently place the platform's own name in the same
+# "second segment" position a real employer name would occupy (e.g.
+# Internshala listings often read "MIS Executive - Internshala" with no
+# employer name in the title at all), which previously caused leads to be
+# created against "Internshala"/"Naukri" etc. as the company. Any title
+# segment matching one of these (case-insensitive, ignoring a trailing
+# .com/.in) is rejected rather than accepted as a low-confidence guess.
+_PLATFORM_NAMES = {
+    "naukri", "indeed", "linkedin", "linkedin jobs", "apna", "foundit",
+    "timesjobs", "workindia", "shine", "internshala", "google", "jobs",
+    "careers", "job", "career",
+}
+
+
+def is_platform_name(candidate: str) -> bool:
+    normalized = re.sub(r"\.(com|in|co)$", "", candidate.strip().lower())
+    return normalized in _PLATFORM_NAMES
+
+
 def guess_company_name_from_title(title: str) -> str | None:
     """Best-effort extraction of a company name from a search result title,
     e.g. 'MIS Executive - ABC Pvt Ltd - Naukri.com' -> 'ABC Pvt Ltd'.
     This is a heuristic only; low-confidence extractions should be confirmed
-    by the JobExtraction AI agent from the full snippet/description."""
-    parts = re.split(r"[-|–]", title)
-    if len(parts) >= 2:
-        candidate = parts[1].strip()
+    by the JobExtraction AI agent from the full snippet/description. Never
+    returns a job-board/platform name — see _PLATFORM_NAMES above."""
+    parts = [p.strip() for p in re.split(r"[-|–]", title) if p.strip()]
+    for candidate in parts[1:]:  # skip parts[0], which is the job title itself
+        if is_platform_name(candidate):
+            continue
         if 2 < len(candidate) < 80:
             return candidate
     return None

@@ -23,7 +23,7 @@ from app.repositories.repositories import (
     search_run_repo, job_repo, company_repo, contact_repo, lead_repo, email_draft_repo,
     email_template_repo,
 )
-from app.sources.source_manager import run_source, guess_company_name_from_title
+from app.sources.source_manager import run_source, guess_company_name_from_title, is_platform_name
 from app.agents.job_extraction import extract_job
 from app.agents.company_research import (
     research_company, discover_email, gather_company_snippets, gather_contact_snippets,
@@ -105,6 +105,8 @@ async def execute_search(run_id: str) -> None:
     contact_cache: dict[str, dict | None] = {}
 
     default_template = await _get_default_template()
+    logger.info("RUN_%s: default_template=%s", run_id,
+                default_template.get("template_id") if default_template else "NONE FOUND")
 
     for source_name in sources:
         try:
@@ -135,7 +137,12 @@ async def execute_search(run_id: str) -> None:
                             run_id, raw.url, raw.title)
                 continue
 
-            company_name = extracted.get("company_name") or guess_company_name_from_title(raw.title)
+            ai_company_name = extracted.get("company_name")
+            if ai_company_name and is_platform_name(ai_company_name):
+                logger.info("RUN_%s: IGNORE ai_company_name=%r (looks like a job-board/platform "
+                            "name, not a real employer) url=%s", run_id, ai_company_name, raw.url)
+                ai_company_name = None
+            company_name = ai_company_name or guess_company_name_from_title(raw.title)
             if not company_name:
                 logger.warning("RUN_%s: DROP url=%s reason=no_company_name_extracted title=%r",
                                run_id, raw.url, raw.title)
@@ -261,6 +268,10 @@ async def execute_search(run_id: str) -> None:
                 continue  # No public email found — cannot create an outreach-ready lead.
 
             opportunity = analyze_opportunity(job_record["job_title"], raw.snippet, extracted.get("skills") or [])
+            if opportunity is None:
+                logger.warning("RUN_%s: opportunity_analysis_failed url=%s company=%r — "
+                               "scoring this lead as 0/MANUAL_REVIEW (OpenAI call failed)",
+                               run_id, raw.url, company_name)
             opp_score = opportunity.get("automation_opportunity_score", 0) if opportunity else 0
             signals = opportunity.get("automation_signals", []) if opportunity else []
             pains = opportunity.get("pain_points", []) if opportunity else []
@@ -290,32 +301,45 @@ async def execute_search(run_id: str) -> None:
             await log_activity(lead_id=lead_id, company_id=company_id, activity_type="STATUS_CHANGED",
                                 description=f"Lead qualified — opportunity score {opp_score}")
 
-            if default_template:
-                generated = generate_initial_email(
-                    company_name=company_name, job_title=job_record["job_title"],
-                    city=job_city, contact_name=contact.get("contact_name") or None,
-                    automation_signals=signals, pain_points=pains,
-                    sender_name=settings.botivate_sender_name,
-                    botivate_website=settings.botivate_website_url,
-                )
-                email_id = new_id("email")
-                await email_draft_repo.create({
-                    "email_id": email_id, "lead_id": lead_id, "company_id": company_id,
-                    "template_id": default_template.get("template_id", ""),
-                    "recipient_email": contact["email"],
-                    "sender_email": settings.botivate_sender_email,
-                    "subject": generated["subject"],
-                    "plain_text_body": generated["plain_text_body"],
-                    "html_body": generated["html_body"],
-                    "personalization_points": ",".join(generated["personalization_points"]),
-                    "facts_used": ",".join(generated["facts_used"]),
-                    "confidence": generated["confidence"],
-                    "status": EmailDraftStatus.DRAFT.value,
-                })
-                await lead_repo.update(lead_id, {"status": LeadStatus.EMAIL_DRAFTED.value})
-                await event_bus.publish(run_id, "email_generated", {"lead_id": lead_id, "email_id": email_id})
-                await log_activity(lead_id=lead_id, company_id=company_id, activity_type="EMAIL_GENERATED",
-                                    description="Personalized outreach email generated (pending approval)")
+            if not default_template:
+                logger.warning("RUN_%s: SKIP_EMAIL_GENERATION lead_id=%s reason=no_default_template "
+                               "(EMAIL_TEMPLATES has no row with is_default=True)", run_id, lead_id)
+            else:
+                try:
+                    generated = generate_initial_email(
+                        company_name=company_name, job_title=job_record["job_title"],
+                        city=job_city, contact_name=contact.get("contact_name") or None,
+                        automation_signals=signals, pain_points=pains,
+                        sender_name=settings.botivate_sender_name,
+                        botivate_website=settings.botivate_website_url,
+                    )
+                    email_id = new_id("email")
+                    await email_draft_repo.create({
+                        "email_id": email_id, "lead_id": lead_id, "company_id": company_id,
+                        "template_id": default_template.get("template_id", ""),
+                        "recipient_email": contact["email"],
+                        "sender_email": settings.botivate_sender_email,
+                        "subject": generated["subject"],
+                        "plain_text_body": generated["plain_text_body"],
+                        "html_body": generated["html_body"],
+                        "personalization_points": ",".join(generated["personalization_points"]),
+                        "facts_used": ",".join(generated["facts_used"]),
+                        "confidence": generated["confidence"],
+                        "status": EmailDraftStatus.DRAFT.value,
+                    })
+                    await lead_repo.update(lead_id, {"status": LeadStatus.EMAIL_DRAFTED.value})
+                    await event_bus.publish(run_id, "email_generated", {"lead_id": lead_id, "email_id": email_id})
+                    await log_activity(lead_id=lead_id, company_id=company_id, activity_type="EMAIL_GENERATED",
+                                        description="Personalized outreach email generated (pending approval)")
+                except Exception:
+                    # A failure here (e.g. a transient Sheets error) must not
+                    # silently leave a lead with status=QUALIFIED forever, and
+                    # must not be swallowed without a trace — log it with the
+                    # full stack trace and let the run continue with the rest
+                    # of the results, exactly like every other per-job failure
+                    # mode in this loop.
+                    logger.exception("RUN_%s: EMAIL_GENERATION_FAILED lead_id=%s company=%r",
+                                      run_id, lead_id, company_name)
 
             # Persist SEARCH_RUNS progress counters periodically rather than
             # after every single job — each update() is a Sheets read+write,
