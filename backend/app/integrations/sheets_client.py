@@ -20,7 +20,7 @@ from typing import Any
 
 import gspread
 from google.oauth2.service_account import Credentials
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, wait_exponential_jitter
 
 from app.config.settings import get_settings
 
@@ -32,6 +32,35 @@ SCOPES = [
 ]
 
 RETRYABLE_EXC = (gspread.exceptions.APIError, ConnectionError, TimeoutError)
+
+
+def _is_quota_error(exc: BaseException) -> bool:
+    """Google Sheets enforces a default 60 requests/minute/user quota
+    (gspread.exceptions.APIError with HTTP 429). A busy search run can
+    exhaust it within seconds; the short exponential backoff used for
+    ordinary transient errors (max ~8s per attempt, 4 attempts) is nowhere
+    near the ~60s the quota window actually needs to reset, so a quota hit
+    would previously exhaust all 4 attempts in under 30s and abort the
+    entire search run - even though the quota would have cleared 30s
+    later. See _wait_for_sheets_error below for the longer backoff applied
+    specifically to this case."""
+    if not isinstance(exc, gspread.exceptions.APIError):
+        return False
+    try:
+        return exc.response.status_code == 429
+    except AttributeError:
+        return False
+
+
+def _wait_for_sheets_error(retry_state):
+    """Quota errors (429) get a long, mostly-fixed wait (~65s, the quota
+    window plus margin) so a retry actually lands after the per-minute
+    limit resets. Any other retryable error (network blip, etc.) falls
+    back to the normal short exponential backoff."""
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    if exc is not None and _is_quota_error(exc):
+        return 65 + (retry_state.attempt_number - 1) * 5
+    return wait_exponential_jitter(initial=0.5, max=8)(retry_state)
 
 
 class SheetsClient:
@@ -86,19 +115,19 @@ class SheetsClient:
         self._ws_cache[name] = ws
         return ws
 
-    @retry(reraise=True, stop=stop_after_attempt(4), wait=wait_exponential(multiplier=0.5, max=8),
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=_wait_for_sheets_error,
            retry=retry_if_exception_type(RETRYABLE_EXC))
     def get_all_records(self, sheet_name: str) -> list[dict[str, Any]]:
         ws = self.worksheet(sheet_name)
         return ws.get_all_records(default_blank="")
 
-    @retry(reraise=True, stop=stop_after_attempt(4), wait=wait_exponential(multiplier=0.5, max=8),
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=_wait_for_sheets_error,
            retry=retry_if_exception_type(RETRYABLE_EXC))
     def append_row(self, sheet_name: str, row: list[Any]) -> None:
         ws = self.worksheet(sheet_name)
         ws.append_row(row, value_input_option="RAW")
 
-    @retry(reraise=True, stop=stop_after_attempt(4), wait=wait_exponential(multiplier=0.5, max=8),
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=_wait_for_sheets_error,
            retry=retry_if_exception_type(RETRYABLE_EXC))
     def find_row_by_id(self, sheet_name: str, id_column: str, id_value: str,
                         row_hint: int | None = None) -> tuple[int, dict[str, Any]] | None:
@@ -136,7 +165,7 @@ class SheetsClient:
                 return i, record
         return None
 
-    @retry(reraise=True, stop=stop_after_attempt(4), wait=wait_exponential(multiplier=0.5, max=8),
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=_wait_for_sheets_error,
            retry=retry_if_exception_type(RETRYABLE_EXC))
     def update_row(self, sheet_name: str, row_number: int, record: dict[str, Any]) -> None:
         ws = self.worksheet(sheet_name)

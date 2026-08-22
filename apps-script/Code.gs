@@ -94,7 +94,10 @@ function onOpen() {
  *
  * Cadence chosen to respect Gmail/Apps Script quotas while keeping the
  * system responsive (System.txt #87 rate limiting, #97 execution limits):
- *   processEmailQueue  every 5 minutes  (small batches, QUEUE_BATCH_SIZE)
+ *   processEmailQueue  every 1 minute   (QUEUE_BATCH_SIZE defaults to 1, so
+ *                      approved emails go out one at a time, roughly one
+ *                      per minute, per explicit user instruction rather
+ *                      than sending a batch of several at once)
  *   processFollowUps   every 15 minutes (lower volume, less time-sensitive)
  *   scanForReplies     every 10 minutes (frequent enough for prompt
  *                      reply-aware follow-up cancellation)
@@ -102,11 +105,11 @@ function onOpen() {
 function installTriggers() {
   removeTriggers();
 
-  ScriptApp.newTrigger('processEmailQueue').timeBased().everyMinutes(5).create();
+  ScriptApp.newTrigger('processEmailQueue').timeBased().everyMinutes(1).create();
   ScriptApp.newTrigger('processFollowUps').timeBased().everyMinutes(15).create();
   ScriptApp.newTrigger('scanForReplies').timeBased().everyMinutes(10).create();
 
-  var message = 'Installed triggers: processEmailQueue (5 min), processFollowUps (15 min), scanForReplies (10 min).';
+  var message = 'Installed triggers: processEmailQueue (1 min), processFollowUps (15 min), scanForReplies (10 min).';
   Logger.log(message);
   try {
     SpreadsheetApp.getUi().alert('Botivate Automation', message, SpreadsheetApp.getUi().ButtonSet.OK);

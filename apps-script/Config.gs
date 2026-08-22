@@ -28,7 +28,10 @@
  *   EMAIL_TEST_MODE             - "true"/"false". Default "true" (safe default).
  *   TEST_EMAIL                  - required if EMAIL_TEST_MODE is true.
  *   MAX_FOLLOW_UPS              - default 4.
- *   QUEUE_BATCH_SIZE            - default 10.
+ *   QUEUE_BATCH_SIZE            - default 1 (sends approved emails one at a
+ *                                  time; the queue trigger runs every 1
+ *                                  minute, so this paces sends to roughly
+ *                                  one per minute rather than a burst).
  *   QUEUE_MAX_ATTEMPTS          - default 3.
  *   BACKEND_WEBHOOK_URL         - FastAPI endpoint that receives new-reply
  *                                  notifications for OpenAI analysis. Optional -
@@ -95,7 +98,7 @@ var BotivateConfig = (function () {
     TEST_EMAIL: function () { return get('TEST_EMAIL', ''); },
 
     MAX_FOLLOW_UPS: function () { return getInt('MAX_FOLLOW_UPS', 4); },
-    QUEUE_BATCH_SIZE: function () { return getInt('QUEUE_BATCH_SIZE', 10); },
+    QUEUE_BATCH_SIZE: function () { return getInt('QUEUE_BATCH_SIZE', 1); },
     QUEUE_MAX_ATTEMPTS: function () { return getInt('QUEUE_MAX_ATTEMPTS', 3); },
 
     BACKEND_WEBHOOK_URL: function () { return get('BACKEND_WEBHOOK_URL', ''); },
@@ -147,7 +150,7 @@ function setupConfigFromValues() {
     TEST_EMAIL: 'team.ai@botivate.in',
 
     MAX_FOLLOW_UPS: '4',
-    QUEUE_BATCH_SIZE: '10',
+    QUEUE_BATCH_SIZE: '1',
     QUEUE_MAX_ATTEMPTS: '3',
 
     // Set this to the same random string you put in the backend's
@@ -222,7 +225,7 @@ function setupConfig() {
     { key: 'EMAIL_TEST_MODE', label: 'Email test mode? (true/false) - keep true until go-live', required: false, defaultValue: 'true' },
     { key: 'TEST_EMAIL', label: 'Test email address (used when EMAIL_TEST_MODE=true)', required: false },
     { key: 'MAX_FOLLOW_UPS', label: 'Max follow-ups per lead', required: false, defaultValue: '4' },
-    { key: 'QUEUE_BATCH_SIZE', label: 'Queue batch size per run', required: false, defaultValue: '10' },
+    { key: 'QUEUE_BATCH_SIZE', label: 'Queue batch size per run', required: false, defaultValue: '1' },
     { key: 'QUEUE_MAX_ATTEMPTS', label: 'Max send attempts before FAILED', required: false, defaultValue: '3' },
     { key: 'BACKEND_WEBHOOK_URL', label: 'Backend webhook URL for new replies (optional)', required: false },
     { key: 'APPS_SCRIPT_SHARED_SECRET', label: 'Shared secret for backend <-> Apps Script auth', required: false },

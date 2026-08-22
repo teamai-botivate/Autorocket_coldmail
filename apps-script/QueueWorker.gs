@@ -4,7 +4,9 @@
  * processEmailQueue() - the EMAIL_QUEUE worker (System.txt #18, #56, #98).
  *
  * Entry point intended for a time-driven trigger (installed by
- * installTriggers() in Code.gs), running every 5 minutes.
+ * installTriggers() in Code.gs), running every 1 minute with
+ * QUEUE_BATCH_SIZE defaulting to 1, so approved emails go out one at a
+ * time rather than in a burst.
  *
  * Steps per execution (System.txt #98):
  *   1. Acquire LockService lock.
@@ -44,6 +46,34 @@ function processEmailQueue() {
     var nowMs = Date.now();
 
     var allQueueRows = SheetRepository.getRows(SHEET_NAMES.EMAIL_QUEUE);
+
+    // Recover rows stuck in PROCESSING from a previous crashed execution
+    // (see the try/catch added around the send in processOneQueueRow_ for
+    // the fix going forward - this handles rows that got stuck BEFORE that
+    // fix existed, or from any other unforeseen crash). A row is only
+    // considered stuck if its last_attempt_at is older than
+    // STUCK_PROCESSING_MINUTES: a genuinely in-flight row from THIS
+    // process never reaches here anyway (LockService serializes runs), so
+    // the only way to see PROCESSING here is a previous run that never
+    // finished updating it.
+    var STUCK_PROCESSING_MINUTES = 10;
+    var staleCutoffMs = nowMs - STUCK_PROCESSING_MINUTES * 60 * 1000;
+    allQueueRows.forEach(function (row) {
+      if (row.status !== 'PROCESSING') return;
+      var lastAttemptMs = row.last_attempt_at ? new Date(row.last_attempt_at).getTime() : 0;
+      if (lastAttemptMs && lastAttemptMs > staleCutoffMs) return; // might still be genuinely in-flight
+      var attempts = (parseInt(row.attempts, 10) || 0) + 1;
+      var recoveredStatus = attempts >= maxAttempts ? 'FAILED' : 'RETRY';
+      SheetRepository.updateRowById(SHEET_NAMES.EMAIL_QUEUE, row.queue_id, {
+        status: recoveredStatus,
+        attempts: attempts,
+        error_message: 'Recovered from a stuck PROCESSING state (previous execution likely crashed, e.g. a Sheets API quota error mid-send).',
+        updated_at: nowIso()
+      });
+      row.status = recoveredStatus; // keep the in-memory snapshot consistent for the filter below
+      Logger.log('processEmailQueue: recovered stuck PROCESSING row ' + row.queue_id + ' -> ' + recoveredStatus);
+    });
+
     var candidates = allQueueRows.filter(function (row) {
       if (row.status !== 'PENDING' && row.status !== 'RETRY') return false;
       var scheduledAt = row.scheduled_at ? new Date(row.scheduled_at).getTime() : 0;
@@ -164,12 +194,27 @@ function processOneQueueRow_(queueRow, ctx) {
     last_attempt_at: nowIso(),
     updated_at: nowIso()
   });
-  logEmailEvent({
-    email_id: liveRow.email_id, lead_id: liveRow.lead_id, company_id: lead ? lead.company_id : '',
-    event_type: 'PROCESSING', metadata: { queue_id: queueId }
-  });
 
-  var result = sendQueuedEmail(liveRow);
+  // Everything from here on (logging, the actual send, and recording the
+  // result) runs inside a try/catch. Without this, ANY uncaught exception
+  // here - most commonly a Google Sheets 429 quota error thrown by
+  // logEmailEvent()/updateRowById() under heavy load - would leave the row
+  // stuck in PROCESSING forever, since a fresh worker run only ever picks
+  // up PENDING/RETRY rows (this is exactly what happened in production:
+  // several rows got stuck in PROCESSING with attempts still at 0 after a
+  // quota error hit mid-send). Falling back to a RETRY/FAILED update here
+  // guarantees the row always leaves PROCESSING with a real outcome.
+  var result;
+  try {
+    logEmailEvent({
+      email_id: liveRow.email_id, lead_id: liveRow.lead_id, company_id: lead ? lead.company_id : '',
+      event_type: 'PROCESSING', metadata: { queue_id: queueId }
+    });
+    result = sendQueuedEmail(liveRow);
+  } catch (crashErr) {
+    result = { success: false, messageId: '', threadId: '', actualRecipient: '',
+               error: 'Unhandled error while sending: ' + crashErr.message };
+  }
 
   if (result.success) {
     var sentAt = nowIso();
