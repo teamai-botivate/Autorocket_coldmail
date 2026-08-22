@@ -4,8 +4,12 @@ Search orchestration (System.txt sections 7, 92-95, 138 end-to-end flow).
 Pipeline per search run:
   sources -> raw results -> JobExtraction -> location filter -> dedup
   -> COMPANIES upsert -> CompanyResearch -> EmailDiscovery -> CONTACTS
-  -> LEADS -> OpportunityAnalysis -> lead score -> EMAIL_DRAFTS (draft only,
-  human approval required before queueing, per rule 17 AUTO_SEND=OFF).
+  -> LEADS -> OpportunityAnalysis -> lead score -> EMAIL_DRAFTS -> auto-queued
+  immediately (per explicit user instruction: no manual approval step -
+  every drafted email is queued the moment it's generated, one lead at a
+  time, rather than waiting for the whole run to finish or requiring a
+  human click). EMAIL_TEST_MODE stays the actual safety net: Apps Script
+  still redirects every real send to TEST_EMAIL regardless of this.
 
 Every step publishes a real event to the EventBus — no fake progress
 numbers (rule 94). If a step fails or a source is unavailable, the run
@@ -31,6 +35,7 @@ from app.agents.company_research import (
 from app.agents.opportunity_analysis import analyze_opportunity, compute_lead_score, compute_priority
 from app.agents.email_generation import generate_initial_email
 from app.services.activity_service import log_activity
+from app.services.email_queue_service import queue_email
 from app.services.event_bus import event_bus
 from app.utils.ids import new_id
 from app.utils.location import normalize_state, normalize_city, city_in_state
@@ -315,7 +320,7 @@ async def execute_search(run_id: str) -> None:
                         autorocket_website=settings.autorocket_website_url,
                     )
                     email_id = new_id("email")
-                    await email_draft_repo.create({
+                    draft = await email_draft_repo.create({
                         "email_id": email_id, "lead_id": lead_id, "company_id": company_id,
                         "template_id": default_template.get("template_id", ""),
                         "recipient_email": contact["email"],
@@ -331,7 +336,24 @@ async def execute_search(run_id: str) -> None:
                     await lead_repo.update(lead_id, {"status": LeadStatus.EMAIL_DRAFTED.value})
                     await event_bus.publish(run_id, "email_generated", {"lead_id": lead_id, "email_id": email_id})
                     await log_activity(lead_id=lead_id, company_id=company_id, activity_type="EMAIL_GENERATED",
-                                        description="Personalized outreach email generated (pending approval)")
+                                        description="Personalized outreach email generated")
+
+                    # Auto-queue immediately (per explicit user instruction: no
+                    # manual approval popup — every drafted email is queued as
+                    # soon as it's generated, not batched until the search
+                    # finishes). EMAIL_TEST_MODE stays on, so Apps Script still
+                    # redirects the actual send to TEST_EMAIL — this only
+                    # removes the human approval step, not the test-mode
+                    # safety net. queue_email() still runs its own suppression
+                    # check before making anything sendable.
+                    try:
+                        await email_draft_repo.update(email_id, {"status": EmailDraftStatus.APPROVED.value})
+                        draft["status"] = EmailDraftStatus.APPROVED.value
+                        await queue_email(draft)
+                        await event_bus.publish(run_id, "email_queued", {"lead_id": lead_id, "email_id": email_id})
+                    except Exception:
+                        logger.exception("RUN_%s: AUTO_QUEUE_FAILED lead_id=%s email_id=%s",
+                                          run_id, lead_id, email_id)
                 except Exception:
                     # A failure here (e.g. a transient Sheets error) must not
                     # silently leave a lead with status=QUALIFIED forever, and

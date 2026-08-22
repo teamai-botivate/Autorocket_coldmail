@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import useSWR, { mutate as globalMutate } from "swr";
+import useSWR from "swr";
 import { apiBase, fetcher } from "@/lib/api";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState, ErrorState } from "@/components/shared/empty-state";
@@ -105,14 +105,6 @@ export function SearchRunClient({ id }: { id: string }) {
           event === "email_generated"
         ) {
           setCounts((prev) => ({ ...prev, [event]: (prev[event] ?? 0) + 1 }));
-          if (event === "email_generated") {
-            // A new outreach email was just drafted for this search run.
-            // Nudge the global pending-approval popup to refetch right now
-            // instead of waiting for its own poll interval, so the "ask
-            // before every send" popup appears immediately during an
-            // active search rather than up to ~15s later.
-            globalMutate("/api/emails/pending-approval");
-          }
         }
       };
 
