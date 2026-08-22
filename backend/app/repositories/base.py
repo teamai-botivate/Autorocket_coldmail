@@ -168,11 +168,27 @@ class BaseRepository:
                 return r
         return None
 
+    @staticmethod
+    def _loose_eq(actual: Any, expected: Any) -> bool:
+        """Comparison used by find_where(). Booleans need special handling:
+        a Python True/False written via create()/update() round-trips
+        through Google Sheets as the string "TRUE"/"FALSE" (Sheets' own
+        boolean cell rendering) or sometimes "1"/""), never as Python's
+        str(True) == "True". A naive str(actual) == str(expected) silently
+        never matches a bool filter, which previously made
+        find_where(is_default=True) always return [] even though the row
+        existed - e.g. email template lookup during a search run silently
+        skipped generating any outreach email for every lead."""
+        if isinstance(expected, bool):
+            actual_str = str(actual).strip().lower()
+            return actual_str in ("true", "1") if expected else actual_str in ("false", "0", "")
+        return str(actual) == str(expected)
+
     async def find_where(self, **filters: Any) -> list[dict[str, Any]]:
         rows = await self.list_all()
         out = []
         for r in rows:
-            if all(str(r.get(k, "")) == str(v) for k, v in filters.items()):
+            if all(self._loose_eq(r.get(k, ""), v) for k, v in filters.items()):
                 out.append(r)
         return out
 
