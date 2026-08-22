@@ -11,16 +11,15 @@ import { useToast } from "@/components/ui/toaster";
 import { INDIAN_STATES, JOB_SOURCES } from "@/lib/indian-states";
 import { Loader2, Search } from "lucide-react";
 
-// Per user requirement: the search form only asks for Role + State. Every
-// other search parameter (city, date filter, experience, sources, result
-// limit) still exists on the backend and is sent with these fixed
-// defaults — searching all configured sources, last 30 days, no location
-// narrower than the state, and a result cap generous enough for a full
-// automatic run (search auto-drafts + the pending-approval popup gates
-// sending, so a larger default here just means more leads to review, not
-// more emails sent automatically).
+// Per user requirement: the search form only asks for Role + State + how
+// many results. Every other search parameter (city, date filter,
+// experience, sources) still exists on the backend and is sent with these
+// fixed defaults — searching all configured sources, last 30 days, no
+// location narrower than the state. Every drafted email is now
+// auto-queued as it's generated (no manual approval step), so the result
+// count directly controls how many outreach emails get sent per search.
 const DEFAULT_DATE_FILTER = "last_30_days";
-const DEFAULT_RESULT_LIMIT = 50;
+const FALLBACK_RESULT_LIMIT = 50;
 const DEFAULT_SOURCES = JOB_SOURCES.map((s) => s.value);
 
 export default function SearchPage() {
@@ -29,12 +28,14 @@ export default function SearchPage() {
 
   const [jobTitle, setJobTitle] = useState("");
   const [state, setState] = useState("");
+  const [resultLimit, setResultLimit] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
     try {
+      const parsedLimit = parseInt(resultLimit, 10);
       const res = await api.post<{ run_id: string }>("/api/search", {
         job_title: jobTitle,
         state,
@@ -42,7 +43,7 @@ export default function SearchPage() {
         date_filter: DEFAULT_DATE_FILTER,
         experience: "",
         sources: DEFAULT_SOURCES,
-        result_limit: DEFAULT_RESULT_LIMIT,
+        result_limit: Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : FALLBACK_RESULT_LIMIT,
       });
       if (!res?.run_id) {
         throw new Error("Backend did not return a run_id.");
@@ -63,7 +64,7 @@ export default function SearchPage() {
     <div>
       <PageHeader
         title="New Job Search"
-        description="Search a role + state. Botivate automatically finds companies, drafts outreach emails, and asks you to confirm each one before sending."
+        description="Search a role + state. Botivate automatically finds companies and sends outreach emails one at a time in the background (test mode redirects every send to the configured test address)."
       />
 
       <Card className="max-w-lg">
@@ -98,6 +99,19 @@ export default function SearchPage() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div>
+              <Label htmlFor="result_limit">How many results</Label>
+              <Input
+                id="result_limit"
+                className="mt-1"
+                type="number"
+                min={1}
+                placeholder="e.g. 50"
+                value={resultLimit}
+                onChange={(e) => setResultLimit(e.target.value)}
+              />
             </div>
 
             <div className="pt-2">
