@@ -15,16 +15,15 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger,
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/components/ui/toaster";
 import { ConversationThread } from "@/components/inbox/conversation-thread";
 import { formatDateTime, humanize } from "@/lib/format";
 import type {
-  LeadDetail, LeadStatus, EmailDraft, FollowUp, ActivityLogEntry, ConversationMessage,
+  LeadDetail, LeadStatus, EmailDraft, ActivityLogEntry, ConversationMessage,
 } from "@/lib/types";
 import {
   Globe, Sparkles, CalendarClock, RefreshCcw, ClipboardEdit, StickyNote,
-  Check, X, Send, Ban, SkipForward, Pencil, Mail, MessageSquare, UserPlus,
+  Check, X, Send, Pencil, Mail, MessageSquare, UserPlus,
   Activity as ActivityIcon, FileText, PhoneCall, Clock, Loader2,
 } from "lucide-react";
 
@@ -56,7 +55,6 @@ export function LeadDetailClient({ id }: { id: string }) {
   const { data: lead, error, isLoading, mutate } = useSWR<LeadDetail>(`/api/leads/${id}`, fetcher);
 
   const [statusOpen, setStatusOpen] = useState(false);
-  const [followUpOpen, setFollowUpOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [generating, setGenerating] = useState(false);
 
@@ -116,23 +114,6 @@ export function LeadDetailClient({ id }: { id: string }) {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <Dialog open={followUpOpen} onOpenChange={setFollowUpOpen}>
-              <DialogTrigger asChild>
-                <Button type="button" variant="outline" size="sm">
-                  <CalendarClock className="h-4 w-4" /> Schedule Follow-up
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <ScheduleFollowUpForm
-                  lead={lead}
-                  onDone={() => {
-                    setFollowUpOpen(false);
-                    mutate();
-                  }}
-                />
-              </DialogContent>
-            </Dialog>
-
             <Dialog open={statusOpen} onOpenChange={setStatusOpen}>
               <DialogTrigger asChild>
                 <Button type="button" variant="outline" size="sm">
@@ -189,7 +170,6 @@ export function LeadDetailClient({ id }: { id: string }) {
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="email">Email</TabsTrigger>
           <TabsTrigger value="conversation">Conversation</TabsTrigger>
-          <TabsTrigger value="follow-ups">Follow-ups</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
 
@@ -205,10 +185,6 @@ export function LeadDetailClient({ id }: { id: string }) {
           <ConversationTab leadId={id} />
         </TabsContent>
 
-        <TabsContent value="follow-ups">
-          <FollowUpsTab followUps={lead.follow_ups || []} mutate={mutate} />
-        </TabsContent>
-
         <TabsContent value="activity">
           <ActivityTab activity={lead.activity || []} />
         </TabsContent>
@@ -218,85 +194,6 @@ export function LeadDetailClient({ id }: { id: string }) {
 }
 
 // ---------- Action forms ----------
-
-function ScheduleFollowUpForm({ lead, onDone }: { lead: LeadDetail; onDone: () => void }) {
-  const { push } = useToast();
-  const [subject, setSubject] = useState("");
-  const [body, setBody] = useState("");
-  const [scheduledAt, setScheduledAt] = useState("");
-  const [notes, setNotes] = useState("");
-  const [sequenceNumber, setSequenceNumber] = useState((lead.follow_ups?.length || 0) + 1);
-  const [submitting, setSubmitting] = useState(false);
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!scheduledAt) return;
-    setSubmitting(true);
-    try {
-      const sentDraft = (lead.email_drafts || []).find((d) => d.status === "SENT");
-      await api.post("/api/follow-ups", {
-        lead_id: lead.lead_id,
-        ...(sentDraft ? { original_email_id: sentDraft.email_id } : {}),
-        sequence_number: sequenceNumber,
-        subject,
-        body,
-        scheduled_at: new Date(scheduledAt).toISOString(),
-        notes,
-      });
-      push({ title: "Follow-up scheduled", variant: "success" });
-      onDone();
-    } catch (e) {
-      push({ title: "Failed to schedule follow-up", description: (e as Error).message, variant: "error" });
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <form onSubmit={handleSubmit}>
-      <DialogHeader>
-        <DialogTitle>Schedule Follow-up</DialogTitle>
-        <DialogDescription>Queue a follow-up email for this lead.</DialogDescription>
-      </DialogHeader>
-      <div className="flex flex-col gap-3">
-        <div>
-          <Label>Subject</Label>
-          <Input value={subject} onChange={(e) => setSubject(e.target.value)} />
-        </div>
-        <div>
-          <Label>Body</Label>
-          <Textarea rows={4} value={body} onChange={(e) => setBody(e.target.value)} />
-        </div>
-        <div>
-          <Label>Scheduled At *</Label>
-          <Input
-            type="datetime-local"
-            value={scheduledAt}
-            onChange={(e) => setScheduledAt(e.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <Label>Sequence Number</Label>
-          <Input
-            type="number"
-            value={sequenceNumber}
-            onChange={(e) => setSequenceNumber(Number(e.target.value))}
-          />
-        </div>
-        <div>
-          <Label>Notes</Label>
-          <Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </div>
-      </div>
-      <DialogFooter>
-        <Button type="submit" variant="primary" disabled={submitting || !scheduledAt}>
-          {submitting ? "Scheduling…" : "Schedule"}
-        </Button>
-      </DialogFooter>
-    </form>
-  );
-}
 
 function ChangeStatusForm({
   leadId,
@@ -753,168 +650,6 @@ function ConversationTab({ leadId }: { leadId: string }) {
   if (!messages.length) return <EmptyState title="No conversation yet" description="No messages have been exchanged for this lead." />;
 
   return <ConversationThread messages={messages} />;
-}
-
-function FollowUpsTab({ followUps, mutate }: { followUps: FollowUp[]; mutate: () => void }) {
-  if (!followUps.length) return <EmptyState title="No follow-ups scheduled" />;
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>#</TableHead>
-          <TableHead>Subject</TableHead>
-          <TableHead>Scheduled At</TableHead>
-          <TableHead>Status</TableHead>
-          <TableHead>Sent At</TableHead>
-          <TableHead>Reply Received</TableHead>
-          <TableHead>Actions</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {followUps.map((f) => (
-          <FollowUpRow key={f.follow_up_id} followUp={f} mutate={mutate} />
-        ))}
-      </TableBody>
-    </Table>
-  );
-}
-
-function FollowUpRow({ followUp, mutate }: { followUp: FollowUp; mutate: () => void }) {
-  const { push } = useToast();
-  const [busy, setBusy] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
-
-  async function run(action: () => Promise<unknown>, successMsg: string) {
-    setBusy(true);
-    try {
-      await action();
-      push({ title: successMsg, variant: "success" });
-      mutate();
-    } catch (e) {
-      push({ title: "Action failed", description: (e as Error).message, variant: "error" });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <TableRow>
-      <TableCell>{followUp.sequence_number}</TableCell>
-      <TableCell>{followUp.subject || "—"}</TableCell>
-      <TableCell>{formatDateTime(followUp.scheduled_at)}</TableCell>
-      <TableCell><StatusBadge status={followUp.status} /></TableCell>
-      <TableCell>{formatDateTime(followUp.sent_at)}</TableCell>
-      <TableCell>{followUp.reply_received ? "Yes" : "No"}</TableCell>
-      <TableCell>
-        <div className="flex flex-wrap gap-1.5">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={busy}
-            onClick={() => run(() => api.post(`/api/follow-ups/${followUp.follow_up_id}/send-now`), "Follow-up sent")}
-          >
-            <Send className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={busy}
-            onClick={() => run(() => api.post(`/api/follow-ups/${followUp.follow_up_id}/skip`), "Follow-up skipped")}
-          >
-            <SkipForward className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="destructive"
-            disabled={busy}
-            onClick={() => run(() => api.post(`/api/follow-ups/${followUp.follow_up_id}/cancel`), "Follow-up cancelled")}
-          >
-            <Ban className="h-3.5 w-3.5" />
-          </Button>
-          <Dialog open={editOpen} onOpenChange={setEditOpen}>
-            <DialogTrigger asChild>
-              <Button type="button" size="sm" variant="outline" disabled={busy}>
-                <Pencil className="h-3.5 w-3.5" />
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <EditFollowUpForm
-                followUp={followUp}
-                onSubmit={async (payload) => {
-                  await run(() => api.patch(`/api/follow-ups/${followUp.follow_up_id}`, payload), "Follow-up updated");
-                  setEditOpen(false);
-                }}
-              />
-            </DialogContent>
-          </Dialog>
-        </div>
-      </TableCell>
-    </TableRow>
-  );
-}
-
-function EditFollowUpForm({
-  followUp,
-  onSubmit,
-}: {
-  followUp: FollowUp;
-  onSubmit: (payload: { subject: string; body: string; scheduled_at: string; notes: string }) => Promise<void>;
-}) {
-  const [subject, setSubject] = useState(followUp.subject || "");
-  const [body, setBody] = useState(followUp.body || "");
-  const [scheduledAt, setScheduledAt] = useState(
-    followUp.scheduled_at ? new Date(followUp.scheduled_at).toISOString().slice(0, 16) : ""
-  );
-  const [notes, setNotes] = useState(followUp.notes || "");
-  const [submitting, setSubmitting] = useState(false);
-
-  return (
-    <div>
-      <DialogHeader>
-        <DialogTitle>Edit Follow-up</DialogTitle>
-      </DialogHeader>
-      <div className="flex flex-col gap-3">
-        <div>
-          <Label>Subject</Label>
-          <Input value={subject} onChange={(e) => setSubject(e.target.value)} />
-        </div>
-        <div>
-          <Label>Body</Label>
-          <Textarea rows={4} value={body} onChange={(e) => setBody(e.target.value)} />
-        </div>
-        <div>
-          <Label>Scheduled At</Label>
-          <Input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
-        </div>
-        <div>
-          <Label>Notes</Label>
-          <Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </div>
-      </div>
-      <DialogFooter>
-        <Button
-          type="button"
-          variant="primary"
-          disabled={submitting}
-          onClick={async () => {
-            setSubmitting(true);
-            await onSubmit({
-              subject,
-              body,
-              scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : followUp.scheduled_at,
-              notes,
-            });
-            setSubmitting(false);
-          }}
-        >
-          Save
-        </Button>
-      </DialogFooter>
-    </div>
-  );
 }
 
 function ActivityTab({ activity }: { activity: ActivityLogEntry[] }) {

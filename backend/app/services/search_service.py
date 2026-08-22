@@ -25,7 +25,7 @@ from app.models.enums import (
 )
 from app.repositories.repositories import (
     search_run_repo, job_repo, company_repo, contact_repo, lead_repo, email_draft_repo,
-    email_template_repo,
+    email_template_repo, email_queue_repo,
 )
 from app.sources.source_manager import run_source, guess_company_name_from_title, is_platform_name
 from app.agents.job_extraction import extract_job
@@ -37,6 +37,7 @@ from app.agents.email_generation import generate_initial_email
 from app.services.activity_service import log_activity
 from app.services.email_queue_service import queue_email
 from app.services.event_bus import event_bus
+from app.services.search_cancellation import is_cancelled, clear as clear_cancellation
 from app.utils.ids import new_id
 from app.utils.location import normalize_state, normalize_city, city_in_state
 from app.utils.time_utils import iso_now
@@ -113,7 +114,12 @@ async def execute_search(run_id: str) -> None:
     logger.info("RUN_%s: default_template=%s", run_id,
                 default_template.get("template_id") if default_template else "NONE FOUND")
 
+    cancelled = False
     for source_name in sources:
+        if is_cancelled(run_id):
+            logger.info("RUN_%s: cancellation requested, stopping before source=%s", run_id, source_name)
+            cancelled = True
+            break
         try:
             source_enum = JobSource(source_name)
         except ValueError:
@@ -126,6 +132,10 @@ async def execute_search(run_id: str) -> None:
         })
 
         for raw in raw_results:
+            if is_cancelled(run_id):
+                logger.info("RUN_%s: cancellation requested, stopping mid-source=%s", run_id, source_name)
+                cancelled = True
+                break
             if raw.url in seen_urls:
                 logger.debug("RUN_%s: skip duplicate url=%s", run_id, raw.url)
                 continue
@@ -378,6 +388,20 @@ async def execute_search(run_id: str) -> None:
                     "emails": email_count, "leads": lead_count,
                 })
 
+        if cancelled:
+            break
+
+    if cancelled:
+        # search_routes.stop_search() already sets status=CANCELLED and
+        # publishes the final event — this function just needs to stop
+        # touching the run further and let that be the last word. Clear the
+        # in-memory cancellation flag now that we've honored it, so the
+        # run_id can be reused safely if it's ever retried.
+        clear_cancellation(run_id)
+        logger.info("RUN_%s: stopped by user request after results=%d qualified=%d leads=%d",
+                     run_id, total_results, qualified_count, lead_count)
+        return
+
     logger.info(
         "RUN_%s: COMPLETED sources=%s results=%d qualified=%d companies=%d emails=%d leads=%d "
         "(openai_configured=%s tavily_configured=%s)",
@@ -394,6 +418,37 @@ async def execute_search(run_id: str) -> None:
         "companies": company_count, "emails": email_count, "leads": lead_count,
     })
     await event_bus.close(run_id)
+
+
+async def cancel_run_pending_emails(run_id: str) -> int:
+    """Cancels every EMAIL_QUEUE row still PENDING (not yet picked up by
+    Apps Script) that belongs to a lead created by this search run. Called
+    from POST /api/search/{run_id}/stop.
+
+    EMAIL_QUEUE rows only carry lead_id, not run_id directly, so this walks
+    lead_id -> LEADS.job_id -> JOBS.run_id to find the matching leads. This
+    is a few full-sheet reads, which is fine here since it only runs once
+    per Stop click, not in a hot loop."""
+    jobs = await job_repo.find_where(run_id=run_id)
+    job_ids = {j["job_id"] for j in jobs}
+    if not job_ids:
+        return 0
+
+    all_leads = await lead_repo.list_all()
+    lead_ids_for_run = {l["lead_id"] for l in all_leads if l.get("job_id") in job_ids}
+    if not lead_ids_for_run:
+        return 0
+
+    queue_rows = await email_queue_repo.list_all()
+    cancelled = 0
+    for row in queue_rows:
+        if row.get("lead_id") in lead_ids_for_run and row.get("status") == "PENDING":
+            await email_queue_repo.update(row["queue_id"], {
+                "status": "CANCELLED",
+                "error_message": "Cancelled — search run was stopped by the user before this email was sent.",
+            })
+            cancelled += 1
+    return cancelled
 
 
 async def _get_default_template() -> dict | None:

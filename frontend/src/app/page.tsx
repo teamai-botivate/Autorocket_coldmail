@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { api, fetcher } from "@/lib/api";
@@ -12,8 +12,8 @@ import { Input, Label } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toaster";
 import { INDIAN_STATES, JOB_SOURCES } from "@/lib/indian-states";
-import { Loader2, Search, Briefcase, Building2, Users, MailCheck, MessageSquareReply } from "lucide-react";
-import type { DashboardData } from "@/lib/types";
+import { Loader2, Search, Square, Briefcase, Building2, Users, MailCheck, MessageSquareReply } from "lucide-react";
+import type { DashboardData, SearchRun } from "@/lib/types";
 
 // Simple, single-screen flow per user request: one search form to kick off
 // a run, and a handful of top-line metrics. No follow-ups/replies/pipeline
@@ -31,6 +31,36 @@ export default function DashboardPage() {
   const [state, setState] = useState("");
   const [resultLimit, setResultLimit] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+
+  // Poll the active run's status while it's in flight, purely to know when
+  // to hide the Stop button (search results themselves show up in /leads
+  // via its own polling, not here).
+  const { data: activeRun } = useSWR<SearchRun>(
+    activeRunId ? `/api/search/${activeRunId}` : null,
+    fetcher,
+    { refreshInterval: 4000 }
+  );
+  const isRunning = !!activeRunId && (activeRun?.status === "RUNNING" || activeRun?.status === "PENDING" || !activeRun);
+
+  // On page load (or after a refresh), pick up a search that's still
+  // running from before — otherwise the Stop button would only ever show
+  // up if you stayed on the page for the whole run, which defeats its
+  // purpose for anything longer than a few seconds.
+  useEffect(() => {
+    if (activeRunId) return;
+    api
+      .get<{ items: SearchRun[] }>("/api/search")
+      .then((res) => {
+        const running = res.items?.find((r) => r.status === "RUNNING" || r.status === "PENDING");
+        if (running) setActiveRunId(running.run_id);
+      })
+      .catch(() => {
+        // No search history endpoint reachable yet — fine, just means no Stop button shows.
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -49,6 +79,7 @@ export default function DashboardPage() {
       if (!res?.run_id) {
         throw new Error("Backend did not return a run_id.");
       }
+      setActiveRunId(res.run_id);
       push({ title: "Search started", description: "Leads will appear in the list below as they're found." });
       router.push("/leads");
     } catch (err) {
@@ -59,6 +90,29 @@ export default function DashboardPage() {
       });
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleStop() {
+    if (!activeRunId) return;
+    setStopping(true);
+    try {
+      const res = await api.post<{ cancelled_pending_emails?: number }>(`/api/search/${activeRunId}/stop`);
+      push({
+        title: "Search stopped",
+        description: res?.cancelled_pending_emails
+          ? `${res.cancelled_pending_emails} not-yet-sent email(s) were cancelled.`
+          : "No pending emails needed cancelling.",
+      });
+      setActiveRunId(null);
+    } catch (err) {
+      push({
+        title: "Failed to stop search",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "error",
+      });
+    } finally {
+      setStopping(false);
     }
   }
 
@@ -118,7 +172,7 @@ export default function DashboardPage() {
               />
             </div>
 
-            <Button type="submit" variant="primary" disabled={submitting || !jobTitle}>
+            <Button type="submit" variant="primary" disabled={submitting || isRunning || !jobTitle}>
               {submitting ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" /> Starting…
@@ -129,7 +183,26 @@ export default function DashboardPage() {
                 </>
               )}
             </Button>
+
+            {isRunning && (
+              <Button type="button" variant="destructive" onClick={handleStop} disabled={stopping}>
+                {stopping ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" /> Stopping…
+                  </>
+                ) : (
+                  <>
+                    <Square className="h-4 w-4" /> Stop
+                  </>
+                )}
+              </Button>
+            )}
           </form>
+          {isRunning && (
+            <p className="mt-2 text-xs text-slate-500">
+              A search is running in the background — stopping it cancels any not-yet-sent emails it queued.
+            </p>
+          )}
         </CardContent>
       </Card>
 

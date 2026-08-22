@@ -28,14 +28,6 @@ const LEAD_STATUSES: LeadStatus[] = [
 
 const PRIORITIES: Priority[] = ["LOW", "MEDIUM", "HIGH", "URGENT"];
 
-const FOLLOW_UP_STATUSES = [
-  "NO_FOLLOW_UP",
-  "FOLLOW_UP_SCHEDULED",
-  "FOLLOW_UP_DUE",
-  "FOLLOW_UP_SENT",
-  "FOLLOW_UP_CANCELLED",
-];
-
 type Filters = {
   state: string;
   city: string;
@@ -46,14 +38,13 @@ type Filters = {
   priority: string;
   email_status: string;
   reply_status: string;
-  follow_up_status: string;
   search: string;
 };
 
 const EMPTY_FILTERS: Filters = {
   state: "", city: "", source: "", job_title: "", company: "",
   status: "", priority: "", email_status: "", reply_status: "",
-  follow_up_status: "", search: "",
+  search: "",
 };
 
 export default function LeadsPage() {
@@ -78,7 +69,6 @@ function LeadsPageInner() {
     priority: sp.get("priority") || "",
     email_status: sp.get("email_status") || "",
     reply_status: sp.get("reply_status") || "",
-    follow_up_status: sp.get("follow_up_status") || "",
     search: sp.get("search") || "",
   }));
   const [minScore, setMinScore] = useState<string>("");
@@ -231,15 +221,6 @@ function LeadsPageInner() {
             <SelectContent>
               <SelectItem value="REPLIED">Replied</SelectItem>
               <SelectItem value="NOT_REPLIED">Not Replied</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select value={filters.follow_up_status || undefined} onValueChange={(v) => setFilter("follow_up_status", v)}>
-            <SelectTrigger><SelectValue placeholder="Follow-up Status" /></SelectTrigger>
-            <SelectContent>
-              {FOLLOW_UP_STATUSES.map((s) => (
-                <SelectItem key={s} value={s}>{humanize(s)}</SelectItem>
-              ))}
             </SelectContent>
           </Select>
 

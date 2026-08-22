@@ -6,8 +6,9 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.schemas.requests import SearchRequest
 from app.repositories.repositories import search_run_repo, source_status_repo
-from app.services.search_service import start_search, execute_search
+from app.services.search_service import start_search, execute_search, cancel_run_pending_emails
 from app.services.event_bus import event_bus
+from app.services.search_cancellation import request_cancellation
 
 router = APIRouter(prefix="/api", tags=["search"])
 logger = logging.getLogger("search_routes")
@@ -32,6 +33,28 @@ async def _run_safely(run_id: str) -> None:
         await search_run_repo.update(run_id, {"status": "FAILED", "error_message": str(exc)})
         await event_bus.publish(run_id, "search_progress", {"status": "FAILED", "error": str(exc)})
         await event_bus.close(run_id)
+
+
+@router.post("/search/{run_id}/stop")
+async def stop_search(run_id: str):
+    """Stop a running search immediately and cancel every not-yet-sent
+    email it queued. Whatever leads/companies/emails were already created
+    before this call stay as-is - this only prevents the run from finding
+    more jobs, and prevents anything still PENDING in EMAIL_QUEUE from
+    this run's leads being sent later by Apps Script."""
+    run = await search_run_repo.get_by_id(run_id)
+    if not run:
+        raise HTTPException(404, "Search run not found")
+    if run.get("status") not in ("PENDING", "RUNNING"):
+        return run  # already finished one way or another — nothing to stop
+
+    request_cancellation(run_id)
+    cancelled_count = await cancel_run_pending_emails(run_id)
+
+    updated = await search_run_repo.update(run_id, {"status": "CANCELLED"})
+    await event_bus.publish(run_id, "search_progress", {"status": "CANCELLED", "cancelled_emails": cancelled_count})
+    await event_bus.close(run_id)
+    return {**(updated or run), "cancelled_pending_emails": cancelled_count}
 
 
 @router.get("/search/{run_id}")
