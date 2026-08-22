@@ -290,3 +290,40 @@ function processOneQueueRow_(queueRow, ctx) {
     });
   }
 }
+
+/**
+ * ONE-TIME CLEANUP UTILITY - not on any trigger, run manually once from the
+ * Apps Script editor's function dropdown after a code fix that resolves a
+ * known send failure. Resets every EMAIL_QUEUE row whose error_message
+ * contains the given substring back to RETRY with attempts=0, so the fixed
+ * QueueWorker code gets a fresh chance to send them on its next 1-minute
+ * run, instead of them sitting FAILED forever because they already
+ * exhausted max_attempts on a bug that is now fixed.
+ *
+ * Specifically written for the "Utilities.htmlEncode is not a function"
+ * bug fixed in EmailSender.gs - run this ONCE after deploying that fix.
+ * Safe to re-run (a no-op if no matching rows remain).
+ */
+function resetHtmlEncodeFailures() {
+  var marker = 'Utilities.htmlEncode is not a function';
+  var rows = SheetRepository.getRows(SHEET_NAMES.EMAIL_QUEUE);
+  var resetCount = 0;
+  rows.forEach(function (row) {
+    if (row.status === 'FAILED' && String(row.error_message || '').indexOf(marker) !== -1) {
+      SheetRepository.updateRowById(SHEET_NAMES.EMAIL_QUEUE, row.queue_id, {
+        status: 'RETRY',
+        attempts: 0,
+        error_message: 'Reset by resetHtmlEncodeFailures() after the Utilities.htmlEncode fix.',
+        updated_at: nowIso()
+      });
+      resetCount++;
+    }
+  });
+  var message = 'resetHtmlEncodeFailures: reset ' + resetCount + ' row(s) from FAILED back to RETRY.';
+  Logger.log(message);
+  try {
+    SpreadsheetApp.getUi().alert('Botivate Automation', message, SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch (e) {
+    // Running headless - logging is sufficient.
+  }
+}

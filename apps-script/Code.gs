@@ -83,6 +83,8 @@ function onOpen() {
     .addItem('Run Queue Worker Now', 'processEmailQueue')
     .addItem('Run Follow-up Worker Now', 'processFollowUps')
     .addItem('Scan Replies Now', 'scanForReplies')
+    .addSeparator()
+    .addItem('Fix: Reset FAILED emails from htmlEncode bug', 'resetHtmlEncodeFailures')
     .addToUi();
 }
 
