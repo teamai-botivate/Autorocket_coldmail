@@ -105,6 +105,7 @@ async def regenerate_email(email_id: str):
         company_name=company.get("company_name", ""), job_title=job.get("job_title", ""),
         city=company.get("city"), contact_name=None, automation_signals=signals, pain_points=pains,
         sender_name=settings.botivate_sender_name, botivate_website=settings.botivate_website_url,
+        autorocket_website=settings.autorocket_website_url,
     )
     updated = await email_draft_repo.update(email_id, {
         "subject": generated["subject"], "plain_text_body": generated["plain_text_body"],

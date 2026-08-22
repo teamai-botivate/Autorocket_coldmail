@@ -173,6 +173,7 @@ async def generate_email_for_lead(lead_id: str):
         city=company.get("city"), contact_name=contact.get("contact_name") or None,
         automation_signals=signals, pain_points=pains,
         sender_name=settings.botivate_sender_name, botivate_website=settings.botivate_website_url,
+        autorocket_website=settings.autorocket_website_url,
     )
     email_id = new_id("email")
     draft = await email_draft_repo.create({

@@ -312,6 +312,7 @@ async def execute_search(run_id: str) -> None:
                         automation_signals=signals, pain_points=pains,
                         sender_name=settings.botivate_sender_name,
                         botivate_website=settings.botivate_website_url,
+                        autorocket_website=settings.autorocket_website_url,
                     )
                     email_id = new_id("email")
                     await email_draft_repo.create({

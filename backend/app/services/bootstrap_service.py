@@ -20,7 +20,8 @@ logger = logging.getLogger("bootstrap")
 async def seed_defaults() -> None:
     try:
         templates = await email_template_repo.list_all()
-        if not any(t.get("is_default") for t in templates):
+        default_row = next((t for t in templates if str(t.get("is_default", "")).strip().lower() in ("true", "1")), None)
+        if default_row is None:
             await email_template_repo.create({
                 "template_id": new_id("template"),
                 "name": "MIS Job — Business Automation Outreach",
@@ -30,6 +31,18 @@ async def seed_defaults() -> None:
                 "html_body": MASTER_HTML_TEMPLATE,
                 "is_active": True,
                 "is_default": True,
+            })
+        else:
+            # Keep the deployed default template's content in sync with the
+            # code (email_master_template.py). Without this, a content
+            # change here would only apply to spreadsheets that don't
+            # already have a default row - every already-deployed sheet
+            # would keep sending whatever text was seeded on its very first
+            # boot forever.
+            await email_template_repo.update(default_row["template_id"], {
+                "subject": MASTER_SUBJECT,
+                "plain_text_body": MASTER_PLAIN_TEMPLATE,
+                "html_body": MASTER_HTML_TEMPLATE,
             })
 
         fu_templates = await follow_up_template_repo.list_all()
