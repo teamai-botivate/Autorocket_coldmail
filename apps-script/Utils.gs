@@ -139,6 +139,27 @@ function sanitizeHtml(html) {
 }
 
 /**
+ * Escapes a plain string for safe inclusion inside HTML markup (&, <, >,
+ * ", '). Apps Script has no built-in Utilities.htmlEncode() - that method
+ * does not exist on the Utilities service despite the name suggesting
+ * otherwise (this previously caused every test-mode send to throw
+ * "Utilities.htmlEncode is not a function" and fail outright). Use this
+ * instead anywhere untrusted/dynamic text needs to be embedded in an HTML
+ * email body.
+ * @param {string} str
+ * @return {string}
+ */
+function escapeHtml_(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
  * Strips all HTML tags to produce a plain-text approximation. Used when
  * only a plain-text body is needed (e.g. for logs) from an HTML source.
  * @param {string} html

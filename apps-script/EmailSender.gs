@@ -82,7 +82,7 @@ function sendQueuedEmail(queueRow) {
     plainBody = plainBody + testNotice;
     if (htmlBody) {
       htmlBody = htmlBody + '<hr><p style="color:#999;font-size:12px;">[Botivate TEST MODE] This email would have been sent to: ' +
-        Utilities.htmlEncode(intendedRecipient) + '</p>';
+        escapeHtml_(intendedRecipient) + '</p>';
     }
   }
 
