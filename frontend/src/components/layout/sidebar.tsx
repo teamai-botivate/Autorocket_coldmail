@@ -1,28 +1,17 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  LayoutDashboard, Search, History, Radar, Briefcase, Building2, Users, Send,
-  CalendarClock, Inbox, ListOrdered, Megaphone, BarChart3, Activity, Settings,
-} from "lucide-react";
+import { LayoutDashboard, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+// Per user request: a deliberately simple two-page flow — search from the
+// Dashboard, review everything in the Leads list/detail. Every other page
+// (Search Runs, Sources, Jobs, Companies, Outreach, Follow-ups, Inbox,
+// Email Queue, Campaigns, Analytics, Activity, Settings) was removed
+// outright, not just hidden from nav.
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/search", label: "Job Search", icon: Search },
-  { href: "/search-runs", label: "Search Runs", icon: History },
-  { href: "/sources", label: "Sources", icon: Radar },
-  { href: "/jobs", label: "Jobs", icon: Briefcase },
-  { href: "/companies", label: "Companies", icon: Building2 },
   { href: "/leads", label: "Leads", icon: Users },
-  { href: "/outreach", label: "Outreach", icon: Send },
-  { href: "/follow-ups", label: "Follow-ups", icon: CalendarClock },
-  { href: "/inbox", label: "Inbox / Replies", icon: Inbox },
-  { href: "/email-queue", label: "Email Queue", icon: ListOrdered },
-  { href: "/campaigns", label: "Campaigns", icon: Megaphone },
-  { href: "/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/activity", label: "Activity", icon: Activity },
-  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 export function Sidebar() {
