@@ -110,6 +110,22 @@ async def execute_search(run_id: str) -> None:
     company_cache: dict[str, dict] = {}
     contact_cache: dict[str, dict | None] = {}
 
+    # Every recipient address that has EVER had an outreach email
+    # drafted/sent for them, across ALL search runs (not just this one).
+    # This is the actual duplicate-send guard: the same company/contact can
+    # legitimately turn up again in a later search (same company posts
+    # another job, or the same role search overlaps), and without this
+    # check that would create a brand new lead + a brand new EMAIL_DRAFTS
+    # row + auto-queue it — i.e. a second cold email to someone who was
+    # already contacted. A company/contact record being reused (via
+    # company_cache/contact_cache above) is fine; creating a NEW lead and
+    # sending them ANOTHER initial email is not.
+    existing_drafts = await email_draft_repo.list_all()
+    already_emailed: set[str] = {
+        str(d.get("recipient_email", "")).strip().lower()
+        for d in existing_drafts if d.get("recipient_email")
+    }
+
     default_template = await _get_default_template()
     logger.info("RUN_%s: default_template=%s", run_id,
                 default_template.get("template_id") if default_template else "NONE FOUND")
@@ -282,6 +298,14 @@ async def execute_search(run_id: str) -> None:
                                run_id, raw.url, company_name)
                 continue  # No public email found — cannot create an outreach-ready lead.
 
+            recipient_email_lower = str(contact.get("email", "")).strip().lower()
+            if recipient_email_lower and recipient_email_lower in already_emailed:
+                logger.info("RUN_%s: DROP url=%s company=%r reason=already_emailed email=%s "
+                            "(an outreach email already exists for this address from a prior lead/run — "
+                            "never send a second initial email to the same recipient)",
+                            run_id, raw.url, company_name, contact["email"])
+                continue
+
             opportunity = analyze_opportunity(job_record["job_title"], raw.snippet, extracted.get("skills") or [])
             if opportunity is None:
                 logger.warning("RUN_%s: opportunity_analysis_failed url=%s company=%r — "
@@ -343,6 +367,12 @@ async def execute_search(run_id: str) -> None:
                         "confidence": generated["confidence"],
                         "status": EmailDraftStatus.DRAFT.value,
                     })
+                    # Mark this recipient as emailed immediately so a later
+                    # result in THIS SAME run (e.g. the same company posted
+                    # two job ads) can't also slip past the already_emailed
+                    # check above before the next full sheet read would see it.
+                    if recipient_email_lower:
+                        already_emailed.add(recipient_email_lower)
                     await lead_repo.update(lead_id, {"status": LeadStatus.EMAIL_DRAFTED.value})
                     await event_bus.publish(run_id, "email_generated", {"lead_id": lead_id, "email_id": email_id})
                     await log_activity(lead_id=lead_id, company_id=company_id, activity_type="EMAIL_GENERATED",
