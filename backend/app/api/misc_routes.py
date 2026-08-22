@@ -5,6 +5,7 @@ from app.repositories.repositories import (
 )
 from app.schemas.requests import SettingsPatchRequest
 from app.services.analytics_service import get_dashboard, get_analytics
+from app.services.apps_script_sync_service import sync_config_to_apps_script
 from app.utils.ids import new_id
 from app.config.settings import get_settings
 
@@ -102,6 +103,16 @@ async def patch_settings(req: SettingsPatchRequest):
             await settings_repo.create({"key": key, "value": value, "description": ""})
     items = await settings_repo.list_all()
     return {"values": {s["key"]: s["value"] for s in items}}
+
+
+@router.post("/settings/sync-apps-script")
+async def sync_apps_script_now():
+    """Manually re-push TEST_EMAIL/EMAIL_TEST_MODE/sender identity to Apps
+    Script's Script Properties (also runs automatically on backend
+    startup) — use this after changing Render env vars without redeploying,
+    or to confirm the sync actually reached Apps Script."""
+    await sync_config_to_apps_script()
+    return {"status": "sync triggered — check Apps Script execution logs for the result"}
 
 
 @router.get("/health")

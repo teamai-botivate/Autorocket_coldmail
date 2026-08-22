@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from app.config.settings import get_settings
 from app.services.bootstrap_service import seed_defaults
+from app.services.apps_script_sync_service import sync_config_to_apps_script
 from app.api import (
     search_routes, catalog_routes, lead_routes, email_routes, template_routes,
     follow_up_routes, reply_routes, misc_routes,
@@ -25,6 +26,11 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Botivate backend — sheets_configured=%s openai_configured=%s email_test_mode=%s",
                 settings.sheets_configured, settings.openai_configured, settings.email_test_mode)
     await seed_defaults()
+    # Push TEST_EMAIL/EMAIL_TEST_MODE/sender identity to Apps Script's own
+    # Script Properties so changing these in Render's env vars is enough -
+    # see apps_script_sync_service.py. Best-effort: a failure here never
+    # blocks startup, it just means Apps Script keeps its last-synced values.
+    await sync_config_to_apps_script()
     yield
     logger.info("Shutting down Botivate backend")
 

@@ -184,6 +184,13 @@ function handleWebAppRequest_(params) {
     }
   }
 
+  // sync_config is intentionally its own action, never bundled into 'all' -
+  // it's a config write, not a worker trigger, and should only run when
+  // the caller explicitly asks for it.
+  if (params.action === 'sync_config') {
+    return handleSyncConfig_(params);
+  }
+
   var action = params.action || 'all';
   var ran = [];
   try {
@@ -204,6 +211,30 @@ function handleWebAppRequest_(params) {
   }
 
   return jsonResponse_({ ok: true, ran: ran }, 200);
+}
+
+/**
+ * @private
+ * Lets the backend push a small set of config values (TEST_EMAIL,
+ * EMAIL_TEST_MODE, BOTIVATE_SENDER_EMAIL, BOTIVATE_SENDER_NAME) into this
+ * Apps Script project's OWN Script Properties, so a single change to the
+ * backend's Render environment variables is enough - the operator no
+ * longer needs to separately update Script Properties by hand. Only ever
+ * writes the specific keys listed in ALLOWED_SYNC_KEYS below; never
+ * accepts arbitrary property names from the request, so this can't be
+ * used to overwrite SHEET_ID/APPS_SCRIPT_SHARED_SECRET/etc. remotely.
+ */
+function handleSyncConfig_(params) {
+  var ALLOWED_SYNC_KEYS = ['TEST_EMAIL', 'EMAIL_TEST_MODE', 'BOTIVATE_SENDER_EMAIL', 'BOTIVATE_SENDER_NAME'];
+  var values = {};
+  ALLOWED_SYNC_KEYS.forEach(function (key) {
+    if (params[key] !== undefined && params[key] !== null && String(params[key]).trim() !== '') {
+      values[key] = String(params[key]).trim();
+    }
+  });
+  var applied = setConfigValues_(values);
+  Logger.log('handleSyncConfig_: applied keys: ' + Object.keys(applied).join(', '));
+  return jsonResponse_({ ok: true, applied: Object.keys(applied) }, 200);
 }
 
 /**
