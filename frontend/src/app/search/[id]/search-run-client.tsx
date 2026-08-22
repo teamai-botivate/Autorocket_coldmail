@@ -68,7 +68,7 @@ export function SearchRunClient({ id }: { id: string }) {
         } catch {
           // ignore transient polling errors
         }
-      }, 3000);
+      }, 8000);
     }
 
     try {
