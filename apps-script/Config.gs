@@ -147,7 +147,7 @@ function setupConfigFromValues() {
     BOTIVATE_SENDER_NAME: 'Satyendra Kumar Tandan',
 
     EMAIL_TEST_MODE: 'true',
-    TEST_EMAIL: 'team.ai@botivate.in',
+    TEST_EMAIL: 'prabhatkumarsictc7070@gmail.com',
 
     MAX_FOLLOW_UPS: '4',
     QUEUE_BATCH_SIZE: '1',
@@ -193,6 +193,26 @@ function setConfigValues_(values) {
     scriptProps.setProperties(toSet, false); // false = don't delete keys not present
   }
   return toSet;
+}
+
+/**
+ * ONE-CLICK UTILITY - run this manually from the function dropdown or the
+ * "Botivate Automation" menu whenever you just need to change TEST_EMAIL
+ * without re-running the full setupConfigFromValues() (which would also
+ * re-apply every other value in that function, including
+ * BOTIVATE_SENDER_EMAIL/NAME - this only touches TEST_EMAIL). Edit the
+ * address below, then Run.
+ */
+function setTestEmail() {
+  var newTestEmail = 'prabhatkumarsictc7070@gmail.com';
+  setConfigValues_({ TEST_EMAIL: newTestEmail });
+  var message = 'TEST_EMAIL set to: ' + newTestEmail;
+  Logger.log(message);
+  try {
+    SpreadsheetApp.getUi().alert('Botivate Automation', message, SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch (e) {
+    // Running headless - logging is sufficient.
+  }
 }
 
 /**

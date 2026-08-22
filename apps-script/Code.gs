@@ -76,6 +76,7 @@ function onOpen() {
     .createMenu('Botivate Automation')
     .addItem('Setup Config (one-shot, edit values in code)', 'setupConfigFromValues')
     .addItem('Setup Config (interactive prompts)', 'setupConfig')
+    .addItem('Set TEST_EMAIL', 'setTestEmail')
     .addSeparator()
     .addItem('Install Triggers', 'installTriggers')
     .addItem('Remove Triggers', 'removeTriggers')
