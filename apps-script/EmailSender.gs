@@ -37,6 +37,17 @@
  * is lost. This function also sets/reads the EMAIL_QUEUE `test_mode`
  * boolean column that already exists in the schema (never invent a new
  * column for this).
+ *
+ * IMAGE ASSETS: every outgoing email embeds autorocket-banner.png inline in
+ * the HTML body (the AutoRocket product pitch this email is about) and
+ * attaches botivate-profile.png as a regular attachment (the general
+ * company profile the email text explicitly says is "attached"). Both
+ * files live in the Drive folder configured as
+ * EMAIL_ASSETS_DRIVE_FOLDER_ID (looked up by filename, not a fixed file
+ * ID, so replacing the image in Drive never requires a code change) - see
+ * getEmailAssetBlob_ below. If the folder isn't configured or a file is
+ * missing, the email still sends without that asset rather than failing
+ * the whole send.
  */
 
 /**
@@ -87,6 +98,43 @@ function sendQueuedEmail(queueRow) {
   }
 
   var options = { name: senderName || 'Botivate Services LLP' };
+
+  // Only the INITIAL outreach email carries the two image assets - a short
+  // follow-up nudge doesn't need the full pitch banner/profile repeated.
+  var isInitialEmail = String(queueRow.kind || 'INITIAL') === 'INITIAL';
+  var bannerPlaceholder = '<div id="autorocket-banner-placeholder"></div>';
+  if (isInitialEmail && htmlBody) {
+    var bannerBlob = getEmailAssetBlob_('autorocket-banner.png');
+    if (bannerBlob) {
+      options.inlineImages = { autorocketBanner: bannerBlob };
+      var bannerTag = '<p style="margin:20px 0;"><img src="cid:autorocketBanner" ' +
+        'alt="AutoRocket — Automate your entire business in just one day" ' +
+        'style="max-width:600px;width:100%;height:auto;border-radius:8px;display:block;"/></p>';
+      // The template (email_master_template.py) places this placeholder
+      // exactly where the banner should appear — right after the
+      // AutoRocket paragraph, before the Botivate section — so position
+      // is controlled by the template, not decided here.
+      if (htmlBody.indexOf(bannerPlaceholder) !== -1) {
+        htmlBody = htmlBody.replace(bannerPlaceholder, bannerTag);
+      } else {
+        // Fallback for any HTML body that doesn't carry the placeholder
+        // (e.g. a manually-edited or custom template) — still attach the
+        // banner rather than silently dropping it, just at the end.
+        htmlBody = htmlBody + bannerTag;
+      }
+    } else if (htmlBody.indexOf(bannerPlaceholder) !== -1) {
+      // Asset unavailable — remove the empty placeholder rather than
+      // leaving a stray <div> in the sent email.
+      htmlBody = htmlBody.replace(bannerPlaceholder, '');
+    }
+    var profileBlob = getEmailAssetBlob_('botivate-profile.png');
+    if (profileBlob) {
+      options.attachments = (options.attachments || []).concat([profileBlob]);
+    }
+  } else if (htmlBody && htmlBody.indexOf(bannerPlaceholder) !== -1) {
+    htmlBody = htmlBody.replace(bannerPlaceholder, '');
+  }
+
   if (htmlBody) options.htmlBody = htmlBody;
 
   try {
@@ -150,6 +198,41 @@ function findJustSentMessage_(recipient, subject) {
     messageId: lastMessage.getId(),
     threadId: thread.getId()
   };
+}
+
+/**
+ * Fetches an image asset blob by filename from the configured Drive
+ * folder (EMAIL_ASSETS_DRIVE_FOLDER_ID). Cached per script execution so a
+ * single processEmailQueue() run doesn't hit Drive twice for the same
+ * file if it processes more than one email (QUEUE_BATCH_SIZE > 1).
+ * Returns null (never throws) if the folder isn't configured, doesn't
+ * exist, or doesn't contain a file with that exact name - callers must
+ * treat a missing asset as "skip this asset", not "fail the send".
+ * @private
+ */
+var _emailAssetBlobCache_ = {};
+function getEmailAssetBlob_(fileName) {
+  if (Object.prototype.hasOwnProperty.call(_emailAssetBlobCache_, fileName)) {
+    return _emailAssetBlobCache_[fileName];
+  }
+  var blob = null;
+  try {
+    var folderId = BotivateConfig.EMAIL_ASSETS_DRIVE_FOLDER_ID();
+    if (folderId) {
+      var folder = DriveApp.getFolderById(folderId);
+      var files = folder.getFilesByName(fileName);
+      if (files.hasNext()) {
+        blob = files.next().getBlob();
+      } else {
+        Logger.log('getEmailAssetBlob_: no file named "' + fileName + '" found in EMAIL_ASSETS_DRIVE_FOLDER_ID.');
+      }
+    }
+  } catch (err) {
+    Logger.log('getEmailAssetBlob_: failed to fetch "' + fileName + '" from Drive: ' + err.message);
+    blob = null;
+  }
+  _emailAssetBlobCache_[fileName] = blob;
+  return blob;
 }
 
 /**

@@ -105,6 +105,7 @@ MASTER_HTML_TEMPLATE = """<div style="font-family:Arial,sans-serif;font-size:14p
 <p><strong>1. AutoRocket &ndash; One Day Business Automation</strong></p>
 <p>AutoRocket is our ready-to-use business automation product designed to quickly bring important business processes, tasks, reports, follow-ups and management information into one centralized system.</p>
 <p>It helps businesses begin their automation journey quickly without spending months developing a system from the beginning.</p>
+{{autorocket_banner}}
 <p><strong>2. Botivate Business Automation Plan &ndash; 100% Customized Automation</strong></p>
 <p>For companies with unique workflows and requirements, Botivate provides a completely customized business automation solution.</p>
 <p>Our team studies your existing processes and develops automation according to your exact business requirements, including:</p>

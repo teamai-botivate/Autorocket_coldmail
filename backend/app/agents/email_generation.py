@@ -43,6 +43,14 @@ def generate_initial_email(*, company_name: str, job_title: str, city: str | Non
         sender_name=sender_name,
         botivate_website=botivate_website,
         autorocket_website=autorocket_website or botivate_website,
+        # Left as a literal marker div for EmailSender.gs to string-replace
+        # with an <img cid="..."> tag right before sending — the actual
+        # image blob only exists in Apps Script (fetched from Drive), so
+        # the backend can't render the final <img> tag itself. Placing the
+        # marker HERE (inside the template, between the AutoRocket and
+        # Botivate sections) is what controls the banner's position in the
+        # email; EmailSender.gs never decides placement, only substitutes.
+        autorocket_banner='<div id="autorocket-banner-placeholder"></div>',
     )
     plain_body = _render(MASTER_PLAIN_TEMPLATE, **render_kwargs)
     html_body = _render(MASTER_HTML_TEMPLATE, **render_kwargs)

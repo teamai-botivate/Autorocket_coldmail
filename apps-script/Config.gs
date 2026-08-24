@@ -110,6 +110,13 @@ var BotivateConfig = (function () {
     REPLY_SCAN_LABEL: function () { return get('REPLY_SCAN_LABEL', 'Botivate/Sent'); },
     SENT_LABEL: function () { return get('SENT_LABEL', 'Botivate/Sent'); },
 
+    // Google Drive folder containing the two email image assets, looked up
+    // by filename (not a fixed per-file ID) so replacing an image in Drive
+    // never requires a code change. Expected files inside this folder:
+    //   autorocket-banner.png  (embedded inline in the email body)
+    //   botivate-profile.png   (sent as a regular attachment)
+    EMAIL_ASSETS_DRIVE_FOLDER_ID: function () { return get('EMAIL_ASSETS_DRIVE_FOLDER_ID', ''); },
+
     // Raw accessor, for anything not covered above.
     raw: function (key, defaultValue) { return get(key, defaultValue); },
 
@@ -152,6 +159,11 @@ function setupConfigFromValues() {
     MAX_FOLLOW_UPS: '4',
     QUEUE_BATCH_SIZE: '1',
     QUEUE_MAX_ATTEMPTS: '3',
+
+    // Drive folder holding autorocket-banner.png (inline) and
+    // botivate-profile.png (attachment) — from the folder URL
+    // https://drive.google.com/drive/folders/1YQlinkwKIlS1S0Qj3Dy9SDh-mt5UtV3D
+    EMAIL_ASSETS_DRIVE_FOLDER_ID: '1YQlinkwKIlS1S0Qj3Dy9SDh-mt5UtV3D',
 
     // Set this to the same random string you put in the backend's
     // APPS_SCRIPT_SHARED_SECRET env var. Leave '' to skip for now.
