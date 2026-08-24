@@ -201,6 +201,51 @@ function findJustSentMessage_(recipient, subject) {
 }
 
 /**
+ * ONE-TIME DIAGNOSTIC - run this manually from the function dropdown to
+ * check whether Drive image fetching is working, without sending a real
+ * email. Prints results to Logger.log and shows an alert with a summary.
+ */
+function testEmailAssets() {
+  var folderId = BotivateConfig.EMAIL_ASSETS_DRIVE_FOLDER_ID();
+  var lines = [];
+  lines.push('EMAIL_ASSETS_DRIVE_FOLDER_ID = "' + folderId + '"');
+
+  if (!folderId) {
+    lines.push('FAIL: EMAIL_ASSETS_DRIVE_FOLDER_ID is empty. Run setupConfigFromValues() first.');
+  } else {
+    try {
+      var folder = DriveApp.getFolderById(folderId);
+      lines.push('Folder found: "' + folder.getName() + '"');
+      var allFiles = folder.getFiles();
+      var names = [];
+      while (allFiles.hasNext()) {
+        names.push(allFiles.next().getName());
+      }
+      lines.push('Files in folder: ' + (names.length ? names.join(', ') : '(none)'));
+    } catch (err) {
+      lines.push('FAIL: DriveApp.getFolderById() threw: ' + err.message);
+    }
+  }
+
+  ['autorocket-banner.png', 'botivate-profile.png'].forEach(function (fileName) {
+    var blob = getEmailAssetBlob_(fileName);
+    if (blob) {
+      lines.push('OK: "' + fileName + '" fetched, ' + blob.getBytes().length + ' bytes.');
+    } else {
+      lines.push('FAIL: "' + fileName + '" could not be fetched (see log lines above from getEmailAssetBlob_).');
+    }
+  });
+
+  var summary = lines.join('\n');
+  Logger.log(summary);
+  try {
+    SpreadsheetApp.getUi().alert('Email Asset Diagnostic', summary, SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch (e) {
+    // Running headless - Logger.log output above is sufficient.
+  }
+}
+
+/**
  * Fetches an image asset blob by filename from the configured Drive
  * folder (EMAIL_ASSETS_DRIVE_FOLDER_ID). Cached per script execution so a
  * single processEmailQueue() run doesn't hit Drive twice for the same

@@ -85,6 +85,7 @@ function onOpen() {
     .addItem('Run Follow-up Worker Now', 'processFollowUps')
     .addItem('Scan Replies Now', 'scanForReplies')
     .addSeparator()
+    .addItem('Diagnostic: Test Email Assets (Drive images)', 'testEmailAssets')
     .addItem('Fix: Reset FAILED emails from htmlEncode bug', 'resetHtmlEncodeFailures')
     .addToUi();
 }
