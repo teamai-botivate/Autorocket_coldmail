@@ -154,7 +154,7 @@ function setupConfigFromValues() {
     BOTIVATE_SENDER_NAME: 'Satyendra Kumar Tandan',
 
     EMAIL_TEST_MODE: 'true',
-    TEST_EMAIL: 'prabhatkumarsictc7070@gmail.com',
+    TEST_EMAIL: 'info@botivate.in',
 
     MAX_FOLLOW_UPS: '4',
     QUEUE_BATCH_SIZE: '1',
@@ -216,7 +216,7 @@ function setConfigValues_(values) {
  * address below, then Run.
  */
 function setTestEmail() {
-  var newTestEmail = 'prabhatkumarsictc7070@gmail.com';
+  var newTestEmail = 'info@botivate.in';
   setConfigValues_({ TEST_EMAIL: newTestEmail });
   var message = 'TEST_EMAIL set to: ' + newTestEmail;
   Logger.log(message);
