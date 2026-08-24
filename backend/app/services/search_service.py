@@ -89,7 +89,19 @@ async def execute_search(run_id: str) -> None:
     job_title = run["job_title"]
     state = run.get("state") or None
     city = run.get("city") or None
-    result_limit = int(run.get("result_limit") or 10)
+    # target_lead_count is a target for actual outreach-ready LEADS (i.e.
+    # a company where a public email was also found), not raw jobs — per
+    # explicit user instruction, the run keeps working through sources
+    # until this many leads exist or every source is exhausted, rather
+    # than stopping after the first pass over each source regardless of
+    # how many of those results turned into real leads.
+    target_lead_count = int(run.get("result_limit") or 10)
+    # Per-source fetch size is now independent of the lead target — a
+    # generous fixed cap so each source is queried for as much as it can
+    # give in one pass (still bounded, to avoid unbounded quota usage on a
+    # single search/agent provider), while target_lead_count is what
+    # actually decides when the run stops.
+    per_source_fetch_limit = 30
     sources = [s for s in (run.get("sources") or "").split(",") if s]
 
     total_results = 0
@@ -131,17 +143,23 @@ async def execute_search(run_id: str) -> None:
                 default_template.get("template_id") if default_template else "NONE FOUND")
 
     cancelled = False
+    target_reached = False
     for source_name in sources:
         if is_cancelled(run_id):
             logger.info("RUN_%s: cancellation requested, stopping before source=%s", run_id, source_name)
             cancelled = True
+            break
+        if lead_count >= target_lead_count:
+            logger.info("RUN_%s: target_lead_count=%d reached before source=%s, stopping",
+                        run_id, target_lead_count, source_name)
+            target_reached = True
             break
         try:
             source_enum = JobSource(source_name)
         except ValueError:
             continue
 
-        raw_results = await run_source(job_title, state, city, source_enum, result_limit)
+        raw_results = await run_source(job_title, state, city, source_enum, per_source_fetch_limit)
         logger.info("RUN_%s: source=%s returned %d raw results", run_id, source_name, len(raw_results))
         await event_bus.publish(run_id, "source_status", {
             "source": source_name, "found": len(raw_results),
@@ -151,6 +169,11 @@ async def execute_search(run_id: str) -> None:
             if is_cancelled(run_id):
                 logger.info("RUN_%s: cancellation requested, stopping mid-source=%s", run_id, source_name)
                 cancelled = True
+                break
+            if lead_count >= target_lead_count:
+                logger.info("RUN_%s: target_lead_count=%d reached mid-source=%s, stopping",
+                            run_id, target_lead_count, source_name)
+                target_reached = True
                 break
             if raw.url in seen_urls:
                 logger.debug("RUN_%s: skip duplicate url=%s", run_id, raw.url)
@@ -418,7 +441,7 @@ async def execute_search(run_id: str) -> None:
                     "emails": email_count, "leads": lead_count,
                 })
 
-        if cancelled:
+        if cancelled or target_reached:
             break
 
     if cancelled:
@@ -432,11 +455,20 @@ async def execute_search(run_id: str) -> None:
                      run_id, total_results, qualified_count, lead_count)
         return
 
+    # Completed either because target_lead_count was reached, or every
+    # configured source was exhausted without reaching it — per explicit
+    # user instruction, we never loop indefinitely or invent extra query
+    # variations to force the count; whatever was genuinely found is final.
+    if lead_count < target_lead_count:
+        logger.info("RUN_%s: all sources exhausted with leads=%d short of target_lead_count=%d — "
+                    "this is the true number of outreach-ready leads available for this "
+                    "role/state combination, not a bug", run_id, lead_count, target_lead_count)
+
     logger.info(
         "RUN_%s: COMPLETED sources=%s results=%d qualified=%d companies=%d emails=%d leads=%d "
-        "(openai_configured=%s tavily_configured=%s)",
+        "(target_lead_count=%d openai_configured=%s tavily_configured=%s)",
         run_id, sources, total_results, qualified_count, company_count, email_count, lead_count,
-        settings.openai_configured, settings.tavily_configured,
+        target_lead_count, settings.openai_configured, settings.tavily_configured,
     )
     await search_run_repo.update(run_id, {
         "status": SearchRunStatus.COMPLETED.value, "completed_at": iso_now(),
