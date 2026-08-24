@@ -51,6 +51,9 @@ def generate_initial_email(*, company_name: str, job_title: str, city: str | Non
         # Botivate sections) is what controls the banner's position in the
         # email; EmailSender.gs never decides placement, only substitutes.
         autorocket_banner='<div id="autorocket-banner-placeholder"></div>',
+        # Same pattern for the Botivate profile image — inline in the body,
+        # at the very end after the signature (no longer an attachment).
+        botivate_profile_image='<div id="botivate-profile-placeholder"></div>',
     )
     plain_body = _render(MASTER_PLAIN_TEMPLATE, **render_kwargs)
     html_body = _render(MASTER_HTML_TEMPLATE, **render_kwargs)

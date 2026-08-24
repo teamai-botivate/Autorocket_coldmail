@@ -38,15 +38,14 @@
  * boolean column that already exists in the schema (never invent a new
  * column for this).
  *
- * IMAGE ASSETS: every outgoing email embeds autorocket-banner.png inline in
- * the HTML body (the AutoRocket product pitch this email is about) and
- * attaches botivate-profile.png as a regular attachment (the general
- * company profile the email text explicitly says is "attached"). Both
- * files live in the Drive folder configured as
+ * IMAGE ASSETS: every INITIAL outgoing email embeds two images inline in
+ * the HTML body (no attachments) - autorocket-banner.png right after the
+ * AutoRocket pitch paragraph, and botivate-profile.png at the very end
+ * after the signature. Both files live in the Drive folder configured as
  * EMAIL_ASSETS_DRIVE_FOLDER_ID (looked up by filename, not a fixed file
  * ID, so replacing the image in Drive never requires a code change) - see
  * getEmailAssetBlob_ below. If the folder isn't configured or a file is
- * missing, the email still sends without that asset rather than failing
+ * missing, the email still sends without that image rather than failing
  * the whole send.
  */
 
@@ -101,38 +100,38 @@ function sendQueuedEmail(queueRow) {
 
   // Only the INITIAL outreach email carries the two image assets - a short
   // follow-up nudge doesn't need the full pitch banner/profile repeated.
+  // Both images are inline in the body (no attachments) — the template
+  // (email_master_template.py) places each placeholder exactly where that
+  // image should appear: the AutoRocket banner right after the AutoRocket
+  // paragraph, the Botivate profile at the very end after the signature.
+  // Position is controlled by the template, not decided here — this
+  // function only substitutes each placeholder with the real <img> tag.
   var isInitialEmail = String(queueRow.kind || 'INITIAL') === 'INITIAL';
-  var bannerPlaceholder = '<div id="autorocket-banner-placeholder"></div>';
-  if (isInitialEmail && htmlBody) {
-    var bannerBlob = getEmailAssetBlob_('autorocket-banner.png');
-    if (bannerBlob) {
-      options.inlineImages = { autorocketBanner: bannerBlob };
-      var bannerTag = '<p style="margin:20px 0;"><img src="cid:autorocketBanner" ' +
-        'alt="AutoRocket — Automate your entire business in just one day" ' +
-        'style="max-width:600px;width:100%;height:auto;border-radius:8px;display:block;"/></p>';
-      // The template (email_master_template.py) places this placeholder
-      // exactly where the banner should appear — right after the
-      // AutoRocket paragraph, before the Botivate section — so position
-      // is controlled by the template, not decided here.
-      if (htmlBody.indexOf(bannerPlaceholder) !== -1) {
-        htmlBody = htmlBody.replace(bannerPlaceholder, bannerTag);
+  var inlineImageSpecs = [
+    { placeholder: '<div id="autorocket-banner-placeholder"></div>', fileName: 'autorocket-banner.png',
+      cid: 'autorocketBanner', alt: 'AutoRocket — Automate your entire business in just one day' },
+    { placeholder: '<div id="botivate-profile-placeholder"></div>', fileName: 'botivate-profile.png',
+      cid: 'botivateProfile', alt: 'Botivate — Powering Businesses On Autopilot' }
+  ];
+
+  if (htmlBody) {
+    inlineImageSpecs.forEach(function (spec) {
+      if (htmlBody.indexOf(spec.placeholder) === -1) return;
+      var blob = isInitialEmail ? getEmailAssetBlob_(spec.fileName) : null;
+      if (blob) {
+        options.inlineImages = options.inlineImages || {};
+        options.inlineImages[spec.cid] = blob;
+        var imgTag = '<p style="margin:20px 0;"><img src="cid:' + spec.cid + '" ' +
+          'alt="' + escapeHtml_(spec.alt) + '" ' +
+          'style="max-width:600px;width:100%;height:auto;border-radius:8px;display:block;"/></p>';
+        htmlBody = htmlBody.replace(spec.placeholder, imgTag);
       } else {
-        // Fallback for any HTML body that doesn't carry the placeholder
-        // (e.g. a manually-edited or custom template) — still attach the
-        // banner rather than silently dropping it, just at the end.
-        htmlBody = htmlBody + bannerTag;
+        // Not an initial email, or the asset couldn't be fetched — remove
+        // the empty placeholder rather than leaving a stray <div> in the
+        // sent email.
+        htmlBody = htmlBody.replace(spec.placeholder, '');
       }
-    } else if (htmlBody.indexOf(bannerPlaceholder) !== -1) {
-      // Asset unavailable — remove the empty placeholder rather than
-      // leaving a stray <div> in the sent email.
-      htmlBody = htmlBody.replace(bannerPlaceholder, '');
-    }
-    var profileBlob = getEmailAssetBlob_('botivate-profile.png');
-    if (profileBlob) {
-      options.attachments = (options.attachments || []).concat([profileBlob]);
-    }
-  } else if (htmlBody && htmlBody.indexOf(bannerPlaceholder) !== -1) {
-    htmlBody = htmlBody.replace(bannerPlaceholder, '');
+    });
   }
 
   if (htmlBody) options.htmlBody = htmlBody;

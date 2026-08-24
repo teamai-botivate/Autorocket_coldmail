@@ -65,7 +65,7 @@ Even if a particular team member changes, Botivate continues to maintain the tec
 
 Our objective is to provide a reliable, high-quality and continuously supported business automation system, while saving the management's valuable time and energy.
 
-Please find attached a brief profile of Botivate and AutoRocket.
+Please find a brief profile of Botivate and AutoRocket below.
 
 Learn more about us:
 
@@ -126,7 +126,7 @@ MASTER_HTML_TEMPLATE = """<div style="font-family:Arial,sans-serif;font-size:14p
 <p>Every system developed by Botivate goes through proper review, testing and quality checks. You do not have to depend on the knowledge or availability of one employee.</p>
 <p>Even if a particular team member changes, Botivate continues to maintain the technology, documentation, process knowledge and support. Your automation journey continues without interruption.</p>
 <p>Our objective is to provide a <strong>reliable, high-quality and continuously supported business automation system</strong>, while saving the management's valuable time and energy.</p>
-<p>Please find attached a brief profile of <strong>Botivate and AutoRocket</strong>.</p>
+<p>Please find a brief profile of <strong>Botivate and AutoRocket</strong> below.</p>
 <p>Learn more about us:</p>
 <p><strong>Botivate:</strong> <a href="{{botivate_website}}">{{botivate_website}}</a><br/>
 <strong>AutoRocket:</strong> <a href="{{autorocket_website}}">{{autorocket_website}}</a></p>
@@ -137,6 +137,7 @@ MASTER_HTML_TEMPLATE = """<div style="font-family:Arial,sans-serif;font-size:14p
 Founder &ndash; Botivate Services LLP<br/>
 Raipur, Chhattisgarh<br/>
 <strong>AutoRocket | One Day Business Automation</strong></p>
+{{botivate_profile_image}}
 </div>"""
 
 DEFAULT_FOLLOW_UP_1_SUBJECT = "Re: A Complete Business Automation Team Beyond a Single MIS Hire"
