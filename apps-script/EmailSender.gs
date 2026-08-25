@@ -109,9 +109,13 @@ function sendQueuedEmail(queueRow) {
   var isInitialEmail = String(queueRow.kind || 'INITIAL') === 'INITIAL';
   var inlineImageSpecs = [
     { placeholder: '<div id="autorocket-banner-placeholder"></div>', fileName: 'autorocket-banner.png',
-      cid: 'autorocketBanner', alt: 'AutoRocket — Automate your entire business in just one day' },
+      cid: 'autorocketBanner', alt: 'AutoRocket — Automate your entire business in just one day',
+      linkUrl: '' },
+    // linkUrl: clicking the Botivate profile image opens botivate.in in a
+    // new tab, same as the "Botivate:" text link elsewhere in the body.
     { placeholder: '<div id="botivate-profile-placeholder"></div>', fileName: 'botivate-profile.png',
-      cid: 'botivateProfile', alt: 'Botivate — Powering Businesses On Autopilot' }
+      cid: 'botivateProfile', alt: 'Botivate — Powering Businesses On Autopilot',
+      linkUrl: BotivateConfig.raw('BOTIVATE_WEBSITE_URL', 'https://botivate.in') }
   ];
 
   if (htmlBody) {
@@ -121,9 +125,13 @@ function sendQueuedEmail(queueRow) {
       if (blob) {
         options.inlineImages = options.inlineImages || {};
         options.inlineImages[spec.cid] = blob;
-        var imgTag = '<p style="margin:20px 0;"><img src="cid:' + spec.cid + '" ' +
+        var img = '<img src="cid:' + spec.cid + '" ' +
           'alt="' + escapeHtml_(spec.alt) + '" ' +
-          'style="max-width:600px;width:100%;height:auto;border-radius:8px;display:block;"/></p>';
+          'style="max-width:600px;width:100%;height:auto;border-radius:8px;display:block;border:0;"/>';
+        var inner = spec.linkUrl
+          ? '<a href="' + escapeHtml_(spec.linkUrl) + '" target="_blank" style="text-decoration:none;">' + img + '</a>'
+          : img;
+        var imgTag = '<p style="margin:20px 0;">' + inner + '</p>';
         htmlBody = htmlBody.replace(spec.placeholder, imgTag);
       } else {
         // Not an initial email, or the asset couldn't be fetched — remove
