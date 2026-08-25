@@ -75,12 +75,6 @@ AutoRocket: {{autorocket_website}}
 We would be happy to understand your requirements and recommend the right solution for your organization.
 
 Please let us know a convenient time for a short meeting or live demonstration.
-
-Regards,
-{{sender_name}}
-Founder - Botivate Services LLP
-Raipur, Chhattisgarh
-AutoRocket | One Day Business Automation
 """
 
 MASTER_HTML_TEMPLATE = """<div style="font-family:Arial,sans-serif;font-size:14px;color:#1f2937;line-height:1.6;">
@@ -133,11 +127,6 @@ MASTER_HTML_TEMPLATE = """<div style="font-family:Arial,sans-serif;font-size:14p
 <strong>AutoRocket:</strong> <a href="{{autorocket_website}}">{{autorocket_website}}</a></p>
 <p>We would be happy to understand your requirements and recommend the right solution for your organization.</p>
 <p>Please let us know a convenient time for a short meeting or live demonstration.</p>
-<p>Regards,<br/>
-<strong>{{sender_name}}</strong><br/>
-Founder &ndash; Botivate Services LLP<br/>
-Raipur, Chhattisgarh<br/>
-<strong>AutoRocket | One Day Business Automation</strong></p>
 </div>"""
 
 DEFAULT_FOLLOW_UP_1_SUBJECT = "Re: A Complete Business Automation Team Beyond a Single MIS Hire"

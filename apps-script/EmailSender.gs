@@ -79,22 +79,17 @@ function sendQueuedEmail(queueRow) {
 
   var senderName = BotivateConfig.BOTIVATE_SENDER_NAME();
   var subject = String(queueRow.subject || '(no subject)');
-  // In test mode, prefix the subject so it's obvious in the inbox that
-  // this was a redirected send, and include the real intended recipient
-  // in the body so nothing is lost even if metadata is not consulted.
+  // Per explicit user instruction, the sent email carries NO visible
+  // test-mode indicator (no subject prefix, no body notice) — the point is
+  // to preview exactly what a real recipient would see. The actual safety
+  // redirect above (actualRecipient = testEmail) still fully applies: no
+  // real company is ever contacted while EMAIL_TEST_MODE is true. The real
+  // intended recipient is never lost — it's still recorded untouched in
+  // EMAIL_QUEUE.recipient_email and in the SENT event's metadata by
+  // QueueWorker.gs, just not disclosed inside the email content itself.
   var effectiveSubject = subject;
   var plainBody = String(queueRow.body || '');
   var htmlBody = queueRow.html_body ? String(queueRow.html_body) : undefined;
-
-  if (testMode) {
-    effectiveSubject = '[TEST MODE - would send to ' + intendedRecipient + '] ' + subject;
-    var testNotice = '\n\n---\n[Botivate TEST MODE] This email would have been sent to: ' + intendedRecipient + '\n';
-    plainBody = plainBody + testNotice;
-    if (htmlBody) {
-      htmlBody = htmlBody + '<hr><p style="color:#999;font-size:12px;">[Botivate TEST MODE] This email would have been sent to: ' +
-        escapeHtml_(intendedRecipient) + '</p>';
-    }
-  }
 
   var options = { name: senderName || 'Botivate Services LLP' };
 
