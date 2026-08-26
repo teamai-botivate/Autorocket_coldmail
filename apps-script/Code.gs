@@ -77,6 +77,8 @@ function onOpen() {
     .addItem('Setup Config (one-shot, edit values in code)', 'setupConfigFromValues')
     .addItem('Setup Config (interactive prompts)', 'setupConfig')
     .addItem('Set TEST_EMAIL', 'setTestEmail')
+    .addItem('Enable Test Mode (safe — redirects sends)', 'enableTestMode')
+    .addItem('Disable Test Mode (sends to REAL recipients)', 'disableTestMode')
     .addSeparator()
     .addItem('Install Triggers', 'installTriggers')
     .addItem('Remove Triggers', 'removeTriggers')

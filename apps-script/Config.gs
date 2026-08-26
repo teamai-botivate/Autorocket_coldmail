@@ -228,6 +228,47 @@ function setTestEmail() {
 }
 
 /**
+ * ONE-CLICK UTILITY - run this from the function dropdown or the
+ * "Botivate Automation" menu to turn EMAIL_TEST_MODE ON. While on, every
+ * outgoing email is redirected to TEST_EMAIL instead of the real
+ * recipient - no real company is ever contacted. Deliberately a separate
+ * function from disableTestMode() (rather than one toggle) so which one
+ * you run always matches what you intend, with no need to check the
+ * current state first.
+ */
+function enableTestMode() {
+  setConfigValues_({ EMAIL_TEST_MODE: 'true' });
+  var message = 'EMAIL_TEST_MODE is now ON. All outgoing emails will be redirected to TEST_EMAIL (' +
+    BotivateConfig.TEST_EMAIL() + ').';
+  Logger.log(message);
+  try {
+    SpreadsheetApp.getUi().alert('Botivate Automation', message, SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch (e) {
+    // Running headless - logging is sufficient.
+  }
+}
+
+/**
+ * ONE-CLICK UTILITY - run this from the function dropdown or the
+ * "Botivate Automation" menu to turn EMAIL_TEST_MODE OFF. Once off, every
+ * outgoing email goes to the REAL company email address, sent from
+ * BOTIVATE_SENDER_EMAIL. Double-check the email content/template before
+ * running this - it takes effect on the very next queue worker run
+ * (within ~1 minute), and there is no undo for emails already sent.
+ */
+function disableTestMode() {
+  setConfigValues_({ EMAIL_TEST_MODE: 'false' });
+  var message = 'EMAIL_TEST_MODE is now OFF. Outgoing emails will go to REAL recipients from ' +
+    BotivateConfig.BOTIVATE_SENDER_EMAIL() + '. Make sure this is intentional.';
+  Logger.log(message);
+  try {
+    SpreadsheetApp.getUi().alert('Botivate Automation — REAL SENDING ENABLED', message, SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch (e) {
+    // Running headless - logging is sufficient.
+  }
+}
+
+/**
  * Interactive fallback: prompts (using the spreadsheet UI) for each
  * required/optional value one at a time. Prefer setupConfigFromValues()
  * above - this is kept only for cases where pasting values into code isn't
