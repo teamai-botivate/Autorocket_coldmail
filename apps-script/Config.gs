@@ -150,11 +150,11 @@ var BotivateConfig = (function () {
 function setupConfigFromValues() {
   var values = {
     SHEET_ID: '1or9IURXosJ546yiIAefXfOCkA2UoimJs9hbelcVlTVI',
-    BOTIVATE_SENDER_EMAIL: 'team.ai@botivate.in',
+    BOTIVATE_SENDER_EMAIL: 'info@botivate.in',
     BOTIVATE_SENDER_NAME: 'Satyendra Kumar Tandan',
 
     EMAIL_TEST_MODE: 'true',
-    TEST_EMAIL: 'info@botivate.in',
+    TEST_EMAIL: 'prabhatkumarsictc7070@gmail.com',
 
     MAX_FOLLOW_UPS: '4',
     QUEUE_BATCH_SIZE: '1',
@@ -216,7 +216,7 @@ function setConfigValues_(values) {
  * address below, then Run.
  */
 function setTestEmail() {
-  var newTestEmail = 'info@botivate.in';
+  var newTestEmail = 'prabhatkumarsictc7070@gmail.com';
   setConfigValues_({ TEST_EMAIL: newTestEmail });
   var message = 'TEST_EMAIL set to: ' + newTestEmail;
   Logger.log(message);
