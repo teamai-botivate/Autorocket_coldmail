@@ -110,7 +110,16 @@ function sendQueuedEmail(queueRow) {
     // new tab, same as the "Botivate:" text link elsewhere in the body.
     { placeholder: '<div id="botivate-profile-placeholder"></div>', fileName: 'botivate-profile.png',
       cid: 'botivateProfile', alt: 'Botivate — Powering Businesses On Autopilot',
-      linkUrl: BotivateConfig.raw('BOTIVATE_WEBSITE_URL', 'https://botivate.in') }
+      linkUrl: BotivateConfig.raw('BOTIVATE_WEBSITE_URL', 'https://botivate.in') },
+    // This image REPLACES the text signature block entirely (no separate
+    // "Regards, Satyendra Kumar Tandan..." text) - it is the last thing in
+    // the email. Filename matches exactly what's in the Drive folder today
+    // (including the space and double extension); rename the Drive file to
+    // something simpler like "signature-poster.jpg" and update this
+    // fileName to match whenever convenient - no other change needed.
+    { placeholder: '<div id="signature-poster-placeholder"></div>', fileName: 'Satyendra tandan.jpg.jpeg',
+      cid: 'signaturePoster', alt: 'Satyendra Kumar Tandan — Founder & CEO, Botivate Services LLP',
+      linkUrl: '' }
   ];
 
   if (htmlBody) {

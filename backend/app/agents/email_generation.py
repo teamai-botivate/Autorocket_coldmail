@@ -52,8 +52,13 @@ def generate_initial_email(*, company_name: str, job_title: str, city: str | Non
         # email; EmailSender.gs never decides placement, only substitutes.
         autorocket_banner='<div id="autorocket-banner-placeholder"></div>',
         # Same pattern for the Botivate profile image — inline in the body,
-        # at the very end after the signature (no longer an attachment).
+        # further down the pitch (no longer an attachment).
         botivate_profile_image='<div id="botivate-profile-placeholder"></div>',
+        # Same pattern again for the signature poster — this image REPLACES
+        # the text signature block ("Regards, Satyendra Kumar Tandan...")
+        # entirely; there is no separate text signature anymore, per
+        # explicit user instruction. It is the last thing in the email.
+        signature_poster='<div id="signature-poster-placeholder"></div>',
     )
     plain_body = _render(MASTER_PLAIN_TEMPLATE, **render_kwargs)
     html_body = _render(MASTER_HTML_TEMPLATE, **render_kwargs)
