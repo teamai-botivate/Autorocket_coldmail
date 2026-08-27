@@ -126,11 +126,21 @@ class SheetsClient:
     def clear_data_rows(self, sheet_name: str) -> None:
         """Deletes every data row (everything below row 1) while leaving the
         header row intact. Used by the one-time admin reset endpoint — see
-        misc_routes.py POST /api/settings/reset-all-data."""
+        misc_routes.py POST /api/settings/reset-all-data.
+
+        Uses the sheet's actual populated row count (get_all_values), NOT
+        worksheet.row_count — the latter is the configured GRID size (often
+        1000 regardless of content), and calling delete_rows across the
+        full empty grid when only the header row has content makes the
+        Sheets API reject the request ("not possible to delete all
+        non-frozen rows") because it would leave a frozen-only sheet with a
+        zero-row body. Only deleting the rows that actually hold data
+        avoids that edge case entirely, and is a no-op when the sheet is
+        already just the header row."""
         ws = self.worksheet(sheet_name)
-        row_count = ws.row_count
-        if row_count > 1:
-            ws.delete_rows(2, row_count)
+        populated_row_count = len(ws.get_all_values())
+        if populated_row_count > 1:
+            ws.delete_rows(2, populated_row_count)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=_wait_for_sheets_error,
            retry=retry_if_exception_type(RETRYABLE_EXC))
