@@ -10,12 +10,12 @@ matching the project's existing pattern of small in-process services
 infrastructure for a single daily job.
 
 Behavior:
-- Runs up to DAILY_ATTEMPT_HOURS_IST times per day (default 09:00, 14:00,
-  19:00 IST) — per explicit user instruction: rather than relying on a
-  single daily attempt (which might come up short if sources are thin at
-  that particular moment), the search is retried at several points across
-  the day so a shortfall in one attempt can be made up by a later one on
-  the SAME day.
+- Runs up to DAILY_ATTEMPT_HOURS_IST times per day (default every 3 hours
+  within business hours: 09:00, 12:00, 15:00, 18:00, 21:00 IST) — per
+  explicit user instruction: rather than relying on a single daily attempt
+  (which might come up short if sources are thin at that particular
+  moment), the search is retried at several points across the day so a
+  shortfall in one attempt can be made up by a later one on the SAME day.
 - Fixed search parameters: job_title="MIS Executive", state="Chhattisgarh".
 - The 150/day cap is a TOTAL cap on newly-queued outreach emails for the
   day, shared with the one-time test-mode backlog resend utility
@@ -48,10 +48,12 @@ logger = logging.getLogger("daily_search_scheduler")
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# Three attempts spread across the day rather than one fixed time, so a
-# shortfall in an earlier attempt (e.g. sources thin in the morning) has
-# two more chances to reach the daily 150 target before the day ends.
-DAILY_ATTEMPT_HOURS_IST = [9, 14, 19]  # 09:00, 14:00, 19:00 IST
+# Attempts every 3 hours within business hours, rather than one fixed time,
+# so a shortfall in an earlier attempt (e.g. sources thin in the morning)
+# has several more chances to reach the daily 150 target before the day
+# ends. Kept within 09:00-21:00 IST (not a full 24h/8-attempt spread) per
+# explicit user preference — companies/leads are scarce overnight anyway.
+DAILY_ATTEMPT_HOURS_IST = [9, 12, 15, 18, 21]  # every 3h, 09:00-21:00 IST
 
 DAILY_JOB_TITLE = "MIS Executive"
 DAILY_STATE = "Chhattisgarh"
