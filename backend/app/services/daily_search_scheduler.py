@@ -10,22 +10,28 @@ matching the project's existing pattern of small in-process services
 infrastructure for a single daily job.
 
 Behavior:
-- Runs once per day at DAILY_SEARCH_HOUR_IST (default 09:00 IST).
+- Runs up to DAILY_ATTEMPT_HOURS_IST times per day (default 09:00, 14:00,
+  19:00 IST) — per explicit user instruction: rather than relying on a
+  single daily attempt (which might come up short if sources are thin at
+  that particular moment), the search is retried at several points across
+  the day so a shortfall in one attempt can be made up by a later one on
+  the SAME day.
 - Fixed search parameters: job_title="MIS Executive", state="Chhattisgarh".
 - The 150/day cap is a TOTAL cap on newly-queued outreach emails for the
   day, shared with the one-time test-mode backlog resend utility
   (POST /api/settings/resend-test-mode-emails — see misc_routes.py): before
-  starting, this counts how many EMAIL_QUEUE rows were already created
-  today (real-mode leads from an earlier run today, or backlog rows the
-  resend utility reset to PENDING today) and only asks execute_search() for
-  the REMAINING slots, so the two mechanisms never together exceed 150
-  emails queued in a calendar day (per explicit user instruction — real
-  companies should never receive more than 150 cold emails/day from this
-  system, avoiding both spam appearance and Gmail sending limits).
-- If today's quota is already used up (e.g. the backlog resend alone used
-  150), the scheduler skips today's automated search entirely.
+  each attempt, this counts how many EMAIL_QUEUE rows were already created
+  today (from an earlier attempt today, a manual run, or the backlog
+  resend) and only asks execute_search() for the REMAINING slots, so all
+  attempts together never queue more than 150 emails in a calendar day.
+- If an earlier attempt already reached 150 for the day, every later
+  attempt that same day is skipped outright (no search is even started) —
+  per explicit instruction: "ek baar mil gaya to fir chalne ki zarurat
+  nahi". If today's total falls short of 150 even after all of today's
+  attempts, the shortfall is NOT carried into tomorrow — each day starts
+  a fresh 150 target (per explicit user confirmation).
 - If a search run is still RUNNING when the next scheduled time arrives
-  (shouldn't normally happen for a daily cadence, but guards against
+  (shouldn't normally happen given the spacing, but guards against
   overlapping runs), the scheduler skips that tick rather than starting a
   second concurrent run.
 """
@@ -42,8 +48,10 @@ logger = logging.getLogger("daily_search_scheduler")
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
-DAILY_SEARCH_HOUR_IST = 9
-DAILY_SEARCH_MINUTE_IST = 0
+# Three attempts spread across the day rather than one fixed time, so a
+# shortfall in an earlier attempt (e.g. sources thin in the morning) has
+# two more chances to reach the daily 150 target before the day ends.
+DAILY_ATTEMPT_HOURS_IST = [9, 14, 19]  # 09:00, 14:00, 19:00 IST
 
 DAILY_JOB_TITLE = "MIS Executive"
 DAILY_STATE = "Chhattisgarh"
@@ -54,10 +62,18 @@ _scheduler_task: asyncio.Task | None = None
 
 
 def _next_run_at(now: datetime) -> datetime:
-    target = now.replace(hour=DAILY_SEARCH_HOUR_IST, minute=DAILY_SEARCH_MINUTE_IST, second=0, microsecond=0)
-    if target <= now:
-        target += timedelta(days=1)
-    return target
+    today = now.date()
+    candidates = [
+        now.replace(year=today.year, month=today.month, day=today.day,
+                     hour=h, minute=0, second=0, microsecond=0)
+        for h in DAILY_ATTEMPT_HOURS_IST
+    ]
+    upcoming = [c for c in candidates if c > now]
+    if upcoming:
+        return min(upcoming)
+    # All of today's attempt times have passed — first attempt tomorrow.
+    tomorrow = now + timedelta(days=1)
+    return tomorrow.replace(hour=DAILY_ATTEMPT_HOURS_IST[0], minute=0, second=0, microsecond=0)
 
 
 async def _any_run_currently_active() -> bool:
@@ -139,8 +155,9 @@ def start_daily_search_scheduler() -> None:
     if _scheduler_task is not None:
         return
     _scheduler_task = asyncio.create_task(_scheduler_loop())
-    logger.info("DAILY_SEARCH: scheduler started (daily %02d:%02d IST, %r in %r, daily cap=%d emails)",
-                DAILY_SEARCH_HOUR_IST, DAILY_SEARCH_MINUTE_IST, DAILY_JOB_TITLE, DAILY_STATE, DAILY_TOTAL_EMAIL_CAP)
+    attempt_times = ", ".join(f"{h:02d}:00" for h in DAILY_ATTEMPT_HOURS_IST)
+    logger.info("DAILY_SEARCH: scheduler started (attempts at %s IST, %r in %r, daily cap=%d emails)",
+                attempt_times, DAILY_JOB_TITLE, DAILY_STATE, DAILY_TOTAL_EMAIL_CAP)
 
 
 def stop_daily_search_scheduler() -> None:
