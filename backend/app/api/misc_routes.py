@@ -6,6 +6,7 @@ from app.repositories.repositories import (
 from app.schemas.requests import SettingsPatchRequest
 from app.services.analytics_service import get_dashboard, get_analytics
 from app.services.apps_script_sync_service import sync_config_to_apps_script
+from app.services.daily_search_scheduler import emails_remaining_today, DAILY_TOTAL_EMAIL_CAP
 from app.utils.ids import new_id
 from app.config.settings import get_settings
 
@@ -113,6 +114,59 @@ async def sync_apps_script_now():
     or to confirm the sync actually reached Apps Script."""
     await sync_config_to_apps_script()
     return {"status": "sync triggered — check Apps Script execution logs for the result"}
+
+
+@router.post("/settings/resend-test-mode-emails")
+async def resend_test_mode_emails(limit: int | None = None):
+    """ONE-TIME MIGRATION UTILITY (per explicit user instruction, 2026-08-27):
+    while EMAIL_TEST_MODE was on, every queued email was actually delivered
+    to TEST_EMAIL instead of the real recipient — the real company inboxes
+    never received anything, even though EMAIL_QUEUE/EMAIL_EVENTS recorded
+    them as SENT. Now that real sending is live, those rows need to go out
+    for real. This finds every EMAIL_QUEUE row created while test_mode was
+    true and still in SENT status, and resets it to PENDING (clearing the
+    prior send metadata) so Apps Script's queue worker picks it up again on
+    its next 1-minute run and sends it to the actual recipient this time.
+    Real-mode rows (test_mode=false) are left untouched — this never
+    touches or duplicates a genuinely already-sent real email, since the
+    existing recipient-level duplicate guard in search_service.py works off
+    EMAIL_DRAFTS existing, not this queue status.
+
+    `limit`: per explicit user instruction, these backlog resends count
+    against the SAME daily total-email cap as the automated daily search
+    (see daily_search_scheduler.py's DAILY_TOTAL_EMAIL_CAP). By default
+    (limit unset) this resets only however many rows are still allowed
+    today given what's already been queued today from any source — call it
+    again on later days and it picks up where it left off, never exceeding
+    the shared daily cap. Pass an explicit `limit` only to intentionally
+    override that (e.g. for a controlled manual test)."""
+    if limit is None:
+        limit = await emails_remaining_today()
+        if limit <= 0:
+            return {"reset_count": 0, "remaining_backlog": None,
+                    "reset_items": [], "note": f"today's {DAILY_TOTAL_EMAIL_CAP}-email cap already reached"}
+    items = await email_queue_repo.list_all()
+    reset = []
+    for item in items:
+        if len(reset) >= limit:
+            break
+        is_test_row = str(item.get("test_mode", "")).strip().lower() in ("true", "1")
+        if is_test_row and item.get("status") == "SENT":
+            await email_queue_repo.update(item["queue_id"], {
+                "status": "PENDING",
+                "test_mode": False,
+                "attempts": 0,
+                "sent_at": "",
+                "message_id": "",
+                "thread_id": "",
+                "error_message": "",
+            })
+            reset.append({"queue_id": item["queue_id"], "recipient_email": item.get("recipient_email", "")})
+    remaining = len([
+        i for i in items
+        if str(i.get("test_mode", "")).strip().lower() in ("true", "1") and i.get("status") == "SENT"
+    ]) - len(reset)
+    return {"reset_count": len(reset), "remaining_backlog": max(remaining, 0), "reset_items": reset}
 
 
 @router.get("/health")

@@ -294,6 +294,20 @@ async def execute_search(run_id: str) -> None:
                 if not contact:
                     contact_snippets = await gather_contact_snippets(company_name, company.get("domain"))
                     discovered = discover_email(company_name, company.get("domain"), contact_snippets)
+                    # Only accept the company's own general/official email
+                    # (GENERIC) or a named founder/owner email (FOUNDER) as
+                    # the outreach target — per explicit user instruction,
+                    # HR/careers/support department inboxes are not the
+                    # right recipient for this cold-outreach pitch, even
+                    # when discover_email() does find one and returns it
+                    # with high confidence.
+                    accepted_email_types = (EmailType.GENERIC.value, EmailType.FOUNDER.value)
+                    if discovered and discovered.get("email") and discovered.get("email_type") not in accepted_email_types:
+                        logger.info("RUN_%s: DROP company=%r reason=non_official_email_type "
+                                    "email=%s email_type=%s (HR/department inboxes are not accepted "
+                                    "as the outreach recipient)",
+                                    run_id, company_name, discovered.get("email"), discovered.get("email_type"))
+                        discovered = None
                     if discovered and discovered.get("email"):
                         contact_id = new_id("contact")
                         contact = await contact_repo.create({

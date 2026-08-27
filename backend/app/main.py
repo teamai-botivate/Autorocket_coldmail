@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app.config.settings import get_settings
 from app.services.bootstrap_service import seed_defaults
 from app.services.apps_script_sync_service import sync_config_to_apps_script
+from app.services.daily_search_scheduler import start_daily_search_scheduler, stop_daily_search_scheduler
 from app.api import (
     search_routes, catalog_routes, lead_routes, email_routes, template_routes,
     follow_up_routes, reply_routes, misc_routes,
@@ -31,7 +32,9 @@ async def lifespan(app: FastAPI):
     # see apps_script_sync_service.py. Best-effort: a failure here never
     # blocks startup, it just means Apps Script keeps its last-synced values.
     await sync_config_to_apps_script()
+    start_daily_search_scheduler()
     yield
+    stop_daily_search_scheduler()
     logger.info("Shutting down Botivate backend")
 
 
