@@ -123,6 +123,17 @@ class SheetsClient:
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=_wait_for_sheets_error,
            retry=retry_if_exception_type(RETRYABLE_EXC))
+    def clear_data_rows(self, sheet_name: str) -> None:
+        """Deletes every data row (everything below row 1) while leaving the
+        header row intact. Used by the one-time admin reset endpoint — see
+        misc_routes.py POST /api/settings/reset-all-data."""
+        ws = self.worksheet(sheet_name)
+        row_count = ws.row_count
+        if row_count > 1:
+            ws.delete_rows(2, row_count)
+
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=_wait_for_sheets_error,
+           retry=retry_if_exception_type(RETRYABLE_EXC))
     def append_row(self, sheet_name: str, row: list[Any]) -> None:
         ws = self.worksheet(sheet_name)
         ws.append_row(row, value_input_option="RAW")

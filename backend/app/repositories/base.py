@@ -184,6 +184,16 @@ class BaseRepository:
             return actual_str in ("true", "1") if expected else actual_str in ("false", "0", "")
         return str(actual) == str(expected)
 
+    async def clear_all(self) -> None:
+        """Deletes every data row in this sheet (header row kept). Used only
+        by the one-time admin reset endpoint (POST /api/settings/reset-all-data)
+        — not part of normal application flow."""
+        if self._use_sheets:
+            await run_in_threadpool(self.client.clear_data_rows, self.SHEET_NAME)
+        else:
+            self._mem_store.clear()
+        self._invalidate_list_cache()
+
     async def find_where(self, **filters: Any) -> list[dict[str, Any]]:
         rows = await self.list_all()
         out = []

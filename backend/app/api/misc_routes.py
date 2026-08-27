@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.repositories.repositories import (
     activity_log_repo, campaign_repo, settings_repo, job_repo, lead_repo, email_queue_repo, reply_repo,
+    search_run_repo, company_repo, contact_repo, email_draft_repo, email_event_repo,
 )
 from app.schemas.requests import SettingsPatchRequest
 from app.services.analytics_service import get_dashboard, get_analytics
@@ -167,6 +168,37 @@ async def resend_test_mode_emails(limit: int | None = None):
         if str(i.get("test_mode", "")).strip().lower() in ("true", "1") and i.get("status") == "SENT"
     ]) - len(reset)
     return {"reset_count": len(reset), "remaining_backlog": max(remaining, 0), "reset_items": reset}
+
+
+@router.post("/settings/reset-all-data")
+async def reset_all_data(confirm: str = ""):
+    """ONE-TIME ADMIN UTILITY (per explicit user instruction, 2026-08-27):
+    wipes every data row (header row kept) from SEARCH_RUNS, JOBS,
+    COMPANIES, CONTACTS, LEADS, EMAIL_DRAFTS, EMAIL_QUEUE, EMAIL_EVENTS.
+    Used to start completely fresh after the EMAIL_QUEUE sheet was
+    accidentally emptied by hand and needed a clean, consistent restart
+    across every related tab rather than a partial manual restore.
+
+    Requires ?confirm=yes to actually run, as a guard against an accidental
+    call — this is irreversible (no soft-delete/undo on the Sheets side)."""
+    if confirm != "yes":
+        raise HTTPException(400, "Pass ?confirm=yes to actually wipe all data — this cannot be undone.")
+
+    repos_to_clear = [
+        ("SEARCH_RUNS", search_run_repo),
+        ("JOBS", job_repo),
+        ("COMPANIES", company_repo),
+        ("CONTACTS", contact_repo),
+        ("LEADS", lead_repo),
+        ("EMAIL_DRAFTS", email_draft_repo),
+        ("EMAIL_QUEUE", email_queue_repo),
+        ("EMAIL_EVENTS", email_event_repo),
+    ]
+    cleared = []
+    for name, repo in repos_to_clear:
+        await repo.clear_all()
+        cleared.append(name)
+    return {"cleared": cleared, "note": "Header rows kept. Restart the backend/search fresh."}
 
 
 @router.get("/health")
