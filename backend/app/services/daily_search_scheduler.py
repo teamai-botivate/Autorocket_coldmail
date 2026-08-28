@@ -10,12 +10,14 @@ matching the project's existing pattern of small in-process services
 infrastructure for a single daily job.
 
 Behavior:
-- Runs up to DAILY_ATTEMPT_HOURS_IST times per day (default every 3 hours
-  within business hours: 09:00, 12:00, 15:00, 18:00, 21:00 IST) — per
-  explicit user instruction: rather than relying on a single daily attempt
-  (which might come up short if sources are thin at that particular
-  moment), the search is retried at several points across the day so a
+- Runs every ATTEMPT_INTERVAL_MINUTES (default 15) within business hours
+  (BUSINESS_HOURS_START_IST..BUSINESS_HOURS_END_IST, default 09:00-21:00
+  IST) — per explicit user instruction: rather than relying on a single
+  daily attempt (which might come up short if sources are thin at that
+  particular moment), the search is retried frequently across the day so a
   shortfall in one attempt can be made up by a later one on the SAME day.
+  No attempts run overnight (21:00-09:00 IST) — companies/leads are scarce
+  then anyway, and the 150/day cap is normally reached well before 21:00.
 - Fixed search parameters: job_title="MIS Executive", state="Chhattisgarh".
 - The 150/day cap is a TOTAL cap on newly-queued outreach emails for the
   day, shared with the one-time test-mode backlog resend utility
@@ -48,12 +50,14 @@ logger = logging.getLogger("daily_search_scheduler")
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# Attempts every 3 hours within business hours, rather than one fixed time,
-# so a shortfall in an earlier attempt (e.g. sources thin in the morning)
-# has several more chances to reach the daily 150 target before the day
-# ends. Kept within 09:00-21:00 IST (not a full 24h/8-attempt spread) per
+# Attempts every 15 minutes within business hours, rather than a handful of
+# fixed times, so a shortfall in an earlier attempt (e.g. sources thin in
+# the morning) has many more chances to reach the daily 150 target before
+# the day ends. Kept within business hours (not a full 24h spread) per
 # explicit user preference — companies/leads are scarce overnight anyway.
-DAILY_ATTEMPT_HOURS_IST = [9, 12, 15, 18, 21]  # every 3h, 09:00-21:00 IST
+BUSINESS_HOURS_START_IST = 9   # 09:00 IST
+BUSINESS_HOURS_END_IST = 21    # 21:00 IST
+ATTEMPT_INTERVAL_MINUTES = 15
 
 DAILY_JOB_TITLE = "MIS Executive"
 DAILY_STATE = "Chhattisgarh"
@@ -63,19 +67,40 @@ DAILY_SOURCES = ["naukri", "indeed", "linkedin", "apna", "foundit", "timesjobs",
 _scheduler_task: asyncio.Task | None = None
 
 
+def _business_hours_start(day: datetime) -> datetime:
+    return day.replace(hour=BUSINESS_HOURS_START_IST, minute=0, second=0, microsecond=0)
+
+
+def _business_hours_end(day: datetime) -> datetime:
+    return day.replace(hour=BUSINESS_HOURS_END_IST, minute=0, second=0, microsecond=0)
+
+
 def _next_run_at(now: datetime) -> datetime:
-    today = now.date()
-    candidates = [
-        now.replace(year=today.year, month=today.month, day=today.day,
-                     hour=h, minute=0, second=0, microsecond=0)
-        for h in DAILY_ATTEMPT_HOURS_IST
-    ]
-    upcoming = [c for c in candidates if c > now]
-    if upcoming:
-        return min(upcoming)
-    # All of today's attempt times have passed — first attempt tomorrow.
+    today_start = _business_hours_start(now)
+    today_end = _business_hours_end(now)
+
+    if now < today_start:
+        # Before business hours start today — first attempt is exactly at
+        # the opening time, not clock-aligned to the interval.
+        return today_start
+
+    if now < today_end:
+        # Within business hours — next attempt is the next
+        # ATTEMPT_INTERVAL_MINUTES-aligned slot after `now`, counting from
+        # today_start (so slots are always :00/:15/:30/:45 relative to the
+        # 09:00 start, regardless of when the scheduler process itself
+        # started).
+        minutes_since_start = (now - today_start).total_seconds() / 60
+        next_slot_index = int(minutes_since_start // ATTEMPT_INTERVAL_MINUTES) + 1
+        next_at = today_start + timedelta(minutes=next_slot_index * ATTEMPT_INTERVAL_MINUTES)
+        if next_at < today_end:
+            return next_at
+        # Rounded past the end of business hours — fall through to tomorrow.
+
+    # At or after business hours end today — first attempt is tomorrow's
+    # opening time.
     tomorrow = now + timedelta(days=1)
-    return tomorrow.replace(hour=DAILY_ATTEMPT_HOURS_IST[0], minute=0, second=0, microsecond=0)
+    return _business_hours_start(tomorrow)
 
 
 async def _any_run_currently_active() -> bool:
@@ -157,9 +182,10 @@ def start_daily_search_scheduler() -> None:
     if _scheduler_task is not None:
         return
     _scheduler_task = asyncio.create_task(_scheduler_loop())
-    attempt_times = ", ".join(f"{h:02d}:00" for h in DAILY_ATTEMPT_HOURS_IST)
-    logger.info("DAILY_SEARCH: scheduler started (attempts at %s IST, %r in %r, daily cap=%d emails)",
-                attempt_times, DAILY_JOB_TITLE, DAILY_STATE, DAILY_TOTAL_EMAIL_CAP)
+    logger.info("DAILY_SEARCH: scheduler started (every %d min, %02d:00-%02d:00 IST, "
+                "%r in %r, daily cap=%d emails)",
+                ATTEMPT_INTERVAL_MINUTES, BUSINESS_HOURS_START_IST, BUSINESS_HOURS_END_IST,
+                DAILY_JOB_TITLE, DAILY_STATE, DAILY_TOTAL_EMAIL_CAP)
 
 
 def stop_daily_search_scheduler() -> None:
